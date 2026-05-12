@@ -73,7 +73,6 @@ jobs:
 
       - name: Open release PR
         env:
-          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           branch="release-v${VERSION}"
@@ -84,29 +83,20 @@ jobs:
           git commit -m "chore: release ${VERSION}"
           git push --force-with-lease origin "${branch}"
 
-          body="$(cat <<EOF
-          ## Summary
+          pr_url="https://github.com/${GITHUB_REPOSITORY}/pull/new/${branch}"
 
-          - Bump hf-agentfinder to ${VERSION}
-          - Update uv.lock
-          - Update CHANGELOG.md
+          cat >> "${GITHUB_STEP_SUMMARY}" <<EOF
+          ## Release ${VERSION} prepared
 
-          ## Validation
+          Pushed branch \`${branch}\`.
 
-          - ./scripts/check-release.sh ${VERSION}
+          Open the release PR:
 
-          After merging, publish by pushing the tag:
+          ${pr_url}
 
-          \`\`\`bash
-          git tag v${VERSION}
-          git push origin v${VERSION}
-          \`\`\`
+          After merging the PR, run the **Release** workflow manually with version
+          \`${VERSION}\`, or push tag \`v${VERSION}\`.
           EOF
-          )"
 
-          existing_pr="$(gh pr list --head "${branch}" --base main --json number --jq '.[0].number')"
-          if [ -n "${existing_pr}" ]; then
-            gh pr edit "${existing_pr}" --title "chore: release ${VERSION}" --body "${body}"
-          else
-            gh pr create --base main --head "${branch}" --title "chore: release ${VERSION}" --body "${body}"
-          fi
+          echo "Release branch pushed: ${branch}"
+          echo "Open PR: ${pr_url}"
