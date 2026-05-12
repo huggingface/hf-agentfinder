@@ -153,7 +153,7 @@ def test_space_to_search_result_defaults_to_skill_wrapper() -> None:
     assert result.metadata["runtimeStage"] == "RUNNING"
     assert (
         result.metadata["agentsMdUrl"]
-        == "https://huggingface.co/spaces/alice/cool.space/resolve/main/agents.md"
+        == "https://huggingface.co/spaces/alice/cool.space/agents.md"
     )
     assert "image-to-image" in result.tags
 
@@ -180,10 +180,10 @@ def test_hf_space_mcp_url_uses_gradio_mcp_endpoint() -> None:
     )
 
 
-def test_hf_space_agents_md_url_uses_raw_resolve_path() -> None:
+def test_hf_space_agents_md_url_uses_space_agents_path() -> None:
     assert (
         hf_space_agents_md_url("alice/cool.space")
-        == "https://huggingface.co/spaces/alice/cool.space/resolve/main/agents.md"
+        == "https://huggingface.co/spaces/alice/cool.space/agents.md"
     )
 
 
