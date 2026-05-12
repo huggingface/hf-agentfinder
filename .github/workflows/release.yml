@@ -12,6 +12,7 @@ concurrency:
 
 permissions:
   contents: write
+  id-token: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -47,14 +48,7 @@ jobs:
 
       - name: Publish to PyPI
         if: startsWith(github.ref, 'refs/tags/')
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.UV_PUBLISH_TOKEN }}
-        run: |
-          if [ -z "${UV_PUBLISH_TOKEN}" ]; then
-            echo "Missing UV_PUBLISH_TOKEN repository secret." >&2
-            exit 1
-          fi
-          uv publish dist/*
+        run: uv publish --trusted-publishing automatic dist/*
 
       - name: Restart Hugging Face Space
         if: startsWith(github.ref, 'refs/tags/')
