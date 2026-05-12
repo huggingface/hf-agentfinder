@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
 from typing import TYPE_CHECKING, cast
+from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
-from agentfinder import server
+from agentfinder import cli, server
+from agentfinder.hf_search import HfSemanticSpaceSearcher
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -13,12 +17,14 @@ if TYPE_CHECKING:
 from agentfinder.hf_spaces import (
     AI_SKILL_MEDIA_TYPE,
     HF_SPACE_MEDIA_TYPE,
+    MCP_SERVER_MEDIA_TYPE,
     SpaceResultKind,
     SpaceSearcher,
     SpaceSearchResultLike,
     build_space_skill_markdown,
     hf_space_agents_md_url,
     hf_space_app_url,
+    hf_space_mcp_sse_url,
     search_hf_spaces,
     space_to_search_result,
 )
@@ -34,6 +40,40 @@ SEARCH_BODY = {
     "query": {"text": "image editing", "mediaType": "application/ai-skill"},
     "pageSize": 5,
 }
+SEARCH_RESPONSE = b"""[
+  {
+    "id": "alice/mcp",
+    "author": "alice",
+    "title": "MCP Space",
+    "sdk": "gradio",
+    "likes": 1,
+    "private": false,
+    "tags": ["gradio", "mcp-server"],
+    "runtime": {"stage": "RUNNING"},
+    "ai_short_description": "Use an MCP Space.",
+    "ai_category": "Agents",
+    "semanticRelevancyScore": 0.5,
+    "trendingScore": 2
+  }
+]"""
+
+
+class SearchRequestRecorder:
+    path: str | None = None
+    authorization: str | None = None
+
+
+class SearchHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        SearchRequestRecorder.path = self.path
+        SearchRequestRecorder.authorization = self.headers.get("Authorization")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(SEARCH_RESPONSE)
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
 
 
 @dataclass
@@ -61,6 +101,8 @@ class Space:
 class Searcher:
     def __init__(self, spaces: list[Space]) -> None:
         self.spaces = spaces
+        self.filters: list[str | Iterable[str] | None] = []
+        self.agents: list[bool] = []
 
     def search_spaces(
         self,
@@ -70,7 +112,10 @@ class Searcher:
         sdk: str | list[str] | None = None,
         include_non_running: bool = False,
         token: bool | str | None = None,
+        agents: bool = True,
     ) -> Iterable[SpaceSearchResultLike]:
+        self.filters.append(filter)
+        self.agents.append(agents)
         return iter(cast("list[SpaceSearchResultLike]", self.spaces))
 
 
@@ -128,6 +173,13 @@ def test_hf_space_app_url_is_best_effort_hf_space_subdomain() -> None:
     assert hf_space_app_url("Alice/Cool.Space") == "https://alice-cool-space.hf.space"
 
 
+def test_hf_space_mcp_sse_url_uses_gradio_mcp_endpoint() -> None:
+    assert (
+        hf_space_mcp_sse_url("Alice/Cool.Space")
+        == "https://alice-cool-space.hf.space/gradio_api/mcp/sse"
+    )
+
+
 def test_hf_space_agents_md_url_uses_raw_resolve_path() -> None:
     assert (
         hf_space_agents_md_url("alice/cool.space")
@@ -170,15 +222,165 @@ def test_search_hf_spaces_only_returns_running_spaces() -> None:
     ]
 
 
+def test_search_hf_spaces_requests_agent_spaces_by_default() -> None:
+    searcher = Searcher([Space(id="alice/one", runtime=Runtime(stage="RUNNING"))])
+
+    search_hf_spaces("image editing", searcher=cast("SpaceSearcher", searcher))
+
+    assert searcher.agents == [True]
+
+
+def test_search_hf_spaces_adds_mcp_filter_for_mcp_results() -> None:
+    searcher = Searcher(
+        [Space(id="alice/mcp", tags=["mcp-server"], runtime=Runtime(stage="RUNNING"))]
+    )
+    results = search_hf_spaces(
+        "image editing",
+        searcher=cast("SpaceSearcher", searcher),
+        kind="mcp",
+    )
+
+    assert searcher.filters == [["mcp-server"]]
+    assert [result.mediaType for result in results] == [MCP_SERVER_MEDIA_TYPE]
+    assert results[0].data == {
+        "name": "hf-space-alice-mcp",
+        "transport": "sse",
+        "url": "https://alice-mcp.hf.space/gradio_api/mcp/sse",
+    }
+
+
+def test_search_hf_spaces_returns_skill_and_mcp_for_unfiltered_search() -> None:
+    searcher = Searcher(
+        [Space(id="alice/mcp", tags=["mcp-server"], runtime=Runtime(stage="RUNNING"))]
+    )
+
+    results = search_hf_spaces(
+        "image editing",
+        limit=2,
+        searcher=cast("SpaceSearcher", searcher),
+        kind="all",
+    )
+
+    assert [result.mediaType for result in results] == [AI_SKILL_MEDIA_TYPE, MCP_SERVER_MEDIA_TYPE]
+
+
+def test_cli_search_response_forwards_kind_to_search_stub() -> None:
+    searcher = Searcher(
+        [Space(id="alice/mcp", tags=["mcp-server"], runtime=Runtime(stage="RUNNING"))]
+    )
+
+    response = cli._search_response(
+        "image editing",
+        limit=1,
+        sdk=None,
+        filters=None,
+        include_non_running=False,
+        token=None,
+        base_url="http://127.0.0.1:8080",
+        kind="mcp",
+        searcher=cast("SpaceSearcher", searcher),
+    )
+
+    assert [result.mediaType for result in response.results] == [MCP_SERVER_MEDIA_TYPE]
+
+
+def test_cli_search_response_defaults_to_all_result_kinds() -> None:
+    searcher = Searcher(
+        [Space(id="alice/mcp", tags=["mcp-server"], runtime=Runtime(stage="RUNNING"))]
+    )
+
+    response = cli._search_response(
+        "image editing",
+        limit=2,
+        sdk=None,
+        filters=None,
+        include_non_running=False,
+        token=None,
+        base_url="http://127.0.0.1:8080",
+        searcher=cast("SpaceSearcher", searcher),
+    )
+
+    assert [result.mediaType for result in response.results] == [
+        AI_SKILL_MEDIA_TYPE,
+        MCP_SERVER_MEDIA_TYPE,
+    ]
+
+
+def test_cli_result_type_and_endpoint_support_inline_results() -> None:
+    space = Space(id="alice/mcp", tags=["mcp-server"], runtime=Runtime(stage="RUNNING"))
+    mcp_result = space_to_search_result(cast("SpaceSearchResultLike", space), kind="mcp")
+    space_result = space_to_search_result(cast("SpaceSearchResultLike", space), kind="space")
+
+    assert cli._result_type(mcp_result) == "mcp"
+    assert cli._result_endpoint(mcp_result) == "https://alice-mcp.hf.space/gradio_api/mcp/sse"
+    assert cli._result_type(space_result) == "space"
+    assert cli._result_endpoint(space_result) == "https://alice-mcp.hf.space"
+
+
+def test_hf_semantic_space_searcher_sends_agents_filter_and_token() -> None:
+    SearchRequestRecorder.path = None
+    SearchRequestRecorder.authorization = None
+    httpd = HTTPServer(("127.0.0.1", 0), SearchHandler)
+    thread = Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    configured = "configured-token"
+
+    try:
+        searcher = HfSemanticSpaceSearcher(endpoint=f"http://127.0.0.1:{httpd.server_port}")
+        results = list(
+            searcher.search_spaces(
+                "image editing",
+                filter=["mcp-server"],
+                include_non_running=True,
+                token=configured,
+            )
+        )
+    finally:
+        httpd.shutdown()
+        thread.join(timeout=5)
+        httpd.server_close()
+
+    assert [space.id for space in results] == ["alice/mcp"]
+    assert SearchRequestRecorder.path is not None
+    query = parse_qs(urlparse(SearchRequestRecorder.path).query)
+    assert query == {
+        "q": ["image editing"],
+        "filter": ["mcp-server"],
+        "includeNonRunning": ["true"],
+        "agents": ["true"],
+    }
+    assert SearchRequestRecorder.authorization == f"Bearer {configured}"
+
+
 def test_agent_finder_search_rejects_unsupported_media_type() -> None:
     response = search_agent_finder(
         SearchRequest(
-            query=SearchQuery(text="image editing", mediaType="application/mcp-server+json"),
+            query=SearchQuery(text="image editing", mediaType="application/a2a-agent-card+json"),
             pageSize=5,
         )
     )
 
     assert response.results == []
+
+
+def test_agent_finder_search_routes_mcp_media_type_to_mcp_results() -> None:
+    searcher = Searcher(
+        [Space(id="alice/mcp", tags=["mcp-server"], runtime=Runtime(stage="RUNNING"))]
+    )
+
+    response = search_agent_finder(
+        SearchRequest(
+            query=SearchQuery(text="image editing", mediaType=MCP_SERVER_MEDIA_TYPE),
+            pageSize=5,
+        ),
+        search_spaces=lambda query, **kwargs: search_hf_spaces(
+            query,
+            searcher=cast("SpaceSearcher", searcher),
+            **kwargs,
+        ),
+    )
+
+    assert [result.mediaType for result in response.results] == [MCP_SERVER_MEDIA_TYPE]
 
 
 def test_generated_skill_markdown_has_required_frontmatter() -> None:
@@ -200,7 +402,7 @@ def test_search_response_omits_null_and_default_fields() -> None:
     response = client.post(
         "/search",
         json={
-            "query": {"text": "x", "mediaType": "application/mcp-server+json"},
+            "query": {"text": "x", "mediaType": "application/a2a-agent-card+json"},
             "pageSize": 5,
         },
     )

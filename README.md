@@ -15,10 +15,11 @@ Search results default to `application/ai-skill` entries. Each result points to 
 
 ### Space Search and Skill Generation
 
-`agentfinder` uses Hugging Face Spaces semantic search as a registry backend. A search
-request returns matching Spaces as Agent Finder catalog entries. By default, results are
-presented as `application/ai-skill` artifacts: each entry points to a generated `SKILL.md`
-URL served by this project.
+`agentfinder` uses Hugging Face Spaces semantic search as a registry backend. Search
+requests use the Hub's agent-oriented semantic search (`agents=true`) and return matching
+Spaces as Agent Finder catalog entries. By default, results can include generated
+`application/ai-skill` artifacts, plus `application/mcp-server+json` entries for matching
+Spaces tagged `mcp-server`.
 
 Search responses strictly include only Spaces whose runtime stage is `RUNNING`, so returned
 entries are limited to Spaces that are currently ready to serve traffic. The runtime stage
@@ -32,6 +33,9 @@ the generated skill, and install or load it using their normal skill flow.
 For clients that want raw Space descriptors instead of skills, the same search endpoint can
 return `application/vnd.huggingface.space+json` entries with inline JSON metadata.
 
+Requests for `application/mcp-server+json` add `filter=mcp-server` to the downstream Hub
+search and return MCP server catalog entries that point at the Space's Gradio MCP SSE
+endpoint.
 
 ### Release Automation
 
@@ -70,6 +74,8 @@ release without committing generated application code to the Space repository.
 
 ```bash
 uv run agentfinder spaces search "generate image" --limit 5
+uv run agentfinder spaces search "generate image" --kind skill --json
+uv run agentfinder spaces search "generate image" --kind mcp --json
 uv run agentfinder spaces search "generate image" --json
 uv run agentfinder serve --port 8080
 ```
@@ -98,4 +104,3 @@ HTTP search requests can forward a request-scoped Hugging Face token for the dow
 Spaces search call. The server checks `X-HF-Authorization: Bearer ...`, then
 `Authorization: Bearer ...`, then `HF_TOKEN: ...`; a header token overrides any token
 configured when the server starts and is not stored beyond the request.
-

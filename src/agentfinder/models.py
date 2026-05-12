@@ -41,9 +41,9 @@ class SearchQuery(BaseModel):
         description=(
             "Requested Agent Finder artifact media type. This Hugging Face adapter currently "
             "returns generated AI skills for `application/ai-skill` or omitted mediaType, and "
-            "raw Space descriptors for `application/vnd.huggingface.space+json`. Other Agent "
-            "Finder media types such as `application/mcp-server+json` are valid discovery "
-            "requests but may return no results unless supported by this adapter."
+            "raw Space descriptors for `application/vnd.huggingface.space+json`. "
+            "`application/mcp-server+json` returns MCP server entries for Spaces tagged "
+            "`mcp-server`."
         ),
         examples=[
             "application/ai-skill",

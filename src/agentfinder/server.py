@@ -13,6 +13,7 @@ from agentfinder.hf_spaces import (
     AI_SKILL_MEDIA_TYPE,
     HF_SPACE_MEDIA_TYPE,
     LEGACY_HF_SPACE_MEDIA_TYPE,
+    MCP_SERVER_MEDIA_TYPE,
     SpaceResultKind,
     build_space_skill_markdown,
     hf_space_agents_md_url,
@@ -54,9 +55,9 @@ SEARCH_REQUEST_EXAMPLES: dict[str, Example] = {
     "mcp": Example(
         summary="MCP server discovery request",
         description=(
-            "`application/mcp-server+json` is a standard Agent Finder media type. This adapter "
-            "currently returns no MCP results until Hugging Face Space MCP endpoint "
-            "materialization is verified."
+            "`application/mcp-server+json` returns MCP server entries for Hugging Face Spaces "
+            "tagged `mcp-server`. The Hub search request is constrained with "
+            "`filter=mcp-server&agents=true`."
         ),
         value={
             "query": {
@@ -87,11 +88,14 @@ def _base_url(request: Request) -> str:
 
 
 def _result_kind(media_type: str | None) -> SpaceResultKind | None:
-    if media_type in {None, AI_SKILL_MEDIA_TYPE}:
-        return "skill"
-    if media_type in SPACE_MEDIA_TYPES:
-        return "space"
-    return None
+    kinds: dict[str | None, SpaceResultKind] = {
+        None: "all",
+        AI_SKILL_MEDIA_TYPE: "skill",
+        HF_SPACE_MEDIA_TYPE: "space",
+        LEGACY_HF_SPACE_MEDIA_TYPE: "space",
+        MCP_SERVER_MEDIA_TYPE: "mcp",
+    }
+    return kinds.get(media_type)
 
 
 def _bearer_token(value: str | None) -> str | None:

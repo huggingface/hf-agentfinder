@@ -6,20 +6,23 @@ import re
 from typing import TYPE_CHECKING, Literal, Protocol
 from urllib.parse import quote
 
-from huggingface_hub import HfApi, hf_hub_url
+from huggingface_hub import hf_hub_url
 
+from agentfinder.hf_search import HfSemanticSpaceSearcher
 from agentfinder.models import SearchResult
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
 AI_SKILL_MEDIA_TYPE = "application/ai-skill"
+MCP_SERVER_MEDIA_TYPE = "application/mcp-server+json"
 HF_SPACE_MEDIA_TYPE = "application/vnd.huggingface.space+json"
 LEGACY_HF_SPACE_MEDIA_TYPE = "application/huggingface-space+json"
 HF_SOURCE = "https://huggingface.co"
 DEFAULT_BASE_URL = "http://127.0.0.1:8080"
+MCP_SERVER_TAG = "mcp-server"
 
-SpaceResultKind = Literal["skill", "space"]
+SpaceResultKind = Literal["all", "skill", "space", "mcp"]
 
 
 class SpaceRuntimeLike(Protocol):
@@ -77,6 +80,7 @@ class SpaceSearcher(Protocol):
         sdk: str | list[str] | None = None,
         include_non_running: bool = False,
         token: bool | str | None = None,
+        agents: bool = True,
     ) -> Iterable[SpaceSearchResultLike]: ...
 
 
@@ -94,12 +98,20 @@ def hf_space_app_url(space_id: str) -> str:
     return f"https://{slug}.hf.space"
 
 
+def hf_space_mcp_sse_url(space_id: str) -> str:
+    return f"{hf_space_app_url(space_id)}/gradio_api/mcp/sse"
+
+
 def hf_space_identifier(space_id: str) -> str:
     return f"urn:huggingface:space:{space_id.replace('/', ':')}"
 
 
 def hf_space_skill_identifier(space_id: str) -> str:
     return f"urn:huggingface:skill:space:{space_id.replace('/', ':')}"
+
+
+def hf_space_mcp_identifier(space_id: str) -> str:
+    return f"urn:huggingface:mcp:space:{space_id.replace('/', ':')}"
 
 
 def split_space_id(space_id: str) -> tuple[str, str]:
@@ -142,6 +154,10 @@ def _runtime_stage(space: SpaceSearchResultLike) -> str | None:
 
 def _is_running_space(space: SpaceSearchResultLike) -> bool:
     return _runtime_stage(space) == "RUNNING"
+
+
+def is_mcp_space(space: SpaceSearchResultLike) -> bool:
+    return MCP_SERVER_TAG in (space.tags or [])
 
 
 def _space_metadata(space: SpaceSearchResultLike) -> dict[str, object]:
@@ -196,6 +212,27 @@ def space_to_skill_result(
     )
 
 
+def space_to_mcp_result(space: SpaceSearchResultLike) -> SearchResult:
+    return SearchResult(
+        identifier=hf_space_mcp_identifier(space.id),
+        displayName=f"{space.title or space.id} MCP Server",
+        mediaType=MCP_SERVER_MEDIA_TYPE,
+        data={
+            "name": skill_name_for_space(space.id),
+            "transport": "sse",
+            "url": hf_space_mcp_sse_url(space.id),
+        },
+        description=space.ai_short_description,
+        tags=_space_tags(space),
+        metadata={
+            "sourceType": "huggingface-space",
+            **_space_metadata(space),
+        },
+        score=_score(space),
+        source=HF_SOURCE,
+    )
+
+
 def space_to_search_result(
     space: SpaceSearchResultLike,
     *,
@@ -204,7 +241,35 @@ def space_to_search_result(
 ) -> SearchResult:
     if kind == "space":
         return space_to_space_result(space)
+    if kind == "mcp":
+        return space_to_mcp_result(space)
     return space_to_skill_result(space, base_url=base_url)
+
+
+def _filters_for_kind(filters: list[str] | None, kind: SpaceResultKind) -> list[str] | None:
+    if kind != "mcp":
+        return filters
+    if filters is None:
+        return [MCP_SERVER_TAG]
+    if MCP_SERVER_TAG in filters:
+        return filters
+    return [*filters, MCP_SERVER_TAG]
+
+
+def _results_for_space(
+    space: SpaceSearchResultLike,
+    *,
+    kind: SpaceResultKind,
+    base_url: str,
+) -> list[SearchResult]:
+    if kind == "all":
+        results = [space_to_skill_result(space, base_url=base_url)]
+        if is_mcp_space(space):
+            results.append(space_to_mcp_result(space))
+        return results
+    if kind == "mcp" and not is_mcp_space(space):
+        return []
+    return [space_to_search_result(space, kind=kind, base_url=base_url)]
 
 
 def search_hf_spaces(
@@ -219,19 +284,20 @@ def search_hf_spaces(
     kind: SpaceResultKind = "skill",
     base_url: str = DEFAULT_BASE_URL,
 ) -> list[SearchResult]:
-    api = searcher or HfApi()
+    api = searcher or HfSemanticSpaceSearcher()
     results = api.search_spaces(
         query=query,
-        filter=filters,
+        filter=_filters_for_kind(filters, kind),
         sdk=sdk,
         include_non_running=include_non_running,
         token=token,
+        agents=True,
     )
     running_results = (space for space in results if _is_running_space(space))
-    return [
-        space_to_search_result(space, kind=kind, base_url=base_url)
-        for space in itertools.islice(running_results, limit)
-    ]
+    search_results = itertools.chain.from_iterable(
+        _results_for_space(space, kind=kind, base_url=base_url) for space in running_results
+    )
+    return list(itertools.islice(search_results, limit))
 
 
 def _yaml_string(value: str) -> str:
