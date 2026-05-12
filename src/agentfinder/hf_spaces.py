@@ -6,8 +6,6 @@ import re
 from typing import TYPE_CHECKING, Literal, Protocol
 from urllib.parse import quote
 
-from huggingface_hub import hf_hub_url
-
 from agentfinder.hf_search import HfSemanticSpaceSearcher
 from agentfinder.models import SearchResult
 
@@ -90,7 +88,7 @@ def hf_space_url(space_id: str) -> str:
 
 def hf_space_agents_md_url(space_id: str) -> str:
     split_space_id(space_id)
-    return hf_hub_url(repo_id=space_id, filename="agents.md", repo_type="space")
+    return f"{hf_space_url(space_id)}/agents.md"
 
 
 def hf_space_app_url(space_id: str) -> str:
