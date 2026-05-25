@@ -6,8 +6,18 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
+      bump:
+        description: "Version bump to commit before publishing"
+        required: true
+        default: patch
+        type: choice
+        options:
+          - none
+          - patch
+          - minor
+          - major
       confirm:
-        description: "Type 'release' to publish the current main version"
+        description: "Type 'release' to publish from main"
         required: true
         type: string
 
@@ -43,6 +53,8 @@ jobs:
 
       - name: Check out repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -53,6 +65,26 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.14"
+
+      - name: Bump release version
+        if: github.event_name == 'workflow_dispatch' && inputs.bump != 'none'
+        run: |
+          python scripts/bump-version.py --bump "${{ inputs.bump }}"
+          uv lock
+
+          version="$(python - <<'PY'
+          import tomllib
+
+          with open("pyproject.toml", "rb") as pyproject:
+              print(tomllib.load(pyproject)["project"]["version"])
+          PY
+          )"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml uv.lock
+          git commit -m "chore: release ${version}"
+          git push origin HEAD:main
 
       - name: Read project version
         id: project
@@ -101,5 +133,5 @@ jobs:
             gh release create "${tag}" dist/* \
               --title "${tag}" \
               --generate-notes \
-              --target "${GITHUB_SHA}"
+              --target "$(git rev-parse HEAD)"
           fi
