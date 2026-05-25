@@ -60,8 +60,8 @@ Optionally assert the expected project version:
 
 Use the **Prepare Release** GitHub Action to prepare a release branch. The workflow can bump
 `patch`, `minor`, or `major` from the current `pyproject.toml` version, regenerates
-`uv.lock`, updates `CHANGELOG.md`, runs the release check, pushes `release-vX.Y.Z`, and
-prints the PR URL in the workflow summary. After merging the PR, publish by running the
+`uv.lock`, runs the release check, pushes `release-vX.Y.Z`, and prints the PR URL in the
+workflow summary. After merging the PR, publish by running the
 **Release** workflow with the merged version, or by pushing the matching `vX.Y.Z` tag. The
 release workflow builds artifacts, publishes them to PyPI using trusted publishing, attaches
 the artifacts to the GitHub Release, and restarts the Hugging Face Space when the `HF_TOKEN`

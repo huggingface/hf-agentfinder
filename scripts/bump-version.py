@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import re
-from datetime import UTC, datetime
 from pathlib import Path
 
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[a-zA-Z0-9.-]+)?$")
@@ -12,17 +11,12 @@ BUMP_PARTS = ("major", "minor", "patch")
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Bump project version and changelog.")
+    parser = argparse.ArgumentParser(description="Bump project version.")
     parser.add_argument("version", nargs="?", help="Version to prepare, for example: 0.1.4")
     parser.add_argument(
         "--bump",
         choices=BUMP_PARTS,
         help="Derive the next version by bumping the current project version.",
-    )
-    parser.add_argument(
-        "--notes",
-        default="Prepare release.",
-        help="Single bullet to include in the changelog entry.",
     )
     return parser.parse_args()
 
@@ -67,24 +61,6 @@ def _replace_project_version(pyproject: Path, version: str) -> str:
     return previous_version
 
 
-def _update_changelog(changelog: Path, version: str, notes: str) -> None:
-    today = datetime.now(UTC).date().isoformat()
-    existing = changelog.read_text() if changelog.exists() else "# Changelog\n"
-    existing_body = existing.removeprefix("# Changelog\n").lstrip()
-    notes = notes.rstrip(".")
-
-    entry = (
-        "# Changelog\n\n"
-        f"## [{version}](https://github.com/huggingface/agentfinder/releases/tag/v{version})"
-        f" - {today}\n\n"
-        "### Changes\n\n"
-        f"- {notes}.\n"
-    )
-    if existing_body:
-        entry += f"\n{existing_body}"
-    changelog.write_text(entry)
-
-
 def main() -> None:
     args = _parse_args()
     pyproject = Path("pyproject.toml")
@@ -102,7 +78,6 @@ def main() -> None:
     if previous_version == version:
         raise SystemExit(f"pyproject.toml is already at version {version}")
 
-    _update_changelog(Path("CHANGELOG.md"), version, args.notes)
     print(f"Bumped hf-agentfinder from {previous_version} to {version}")
 
 

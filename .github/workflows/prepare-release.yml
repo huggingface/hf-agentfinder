@@ -12,12 +12,6 @@ on:
           - patch
           - minor
           - major
-      notes:
-        description: "Single changelog bullet"
-        required: false
-        default: "Prepare release"
-        type: string
-
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.bump }}
   cancel-in-progress: true
@@ -53,7 +47,7 @@ jobs:
 
       - name: Prepare release files
         run: |
-          python scripts/bump-version.py --bump "${{ inputs.bump }}" --notes "${{ inputs.notes }}"
+          python scripts/bump-version.py --bump "${{ inputs.bump }}"
           uv lock
 
       - name: Read prepared version
@@ -80,7 +74,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "${branch}"
-          git add pyproject.toml uv.lock CHANGELOG.md
+          git add pyproject.toml uv.lock
           git commit -m "chore: release ${VERSION}"
           git push --force-with-lease origin "${branch}"
 
@@ -91,7 +85,6 @@ jobs:
             --body "## Summary
 
           - Bump package version to ${VERSION}
-          - Update CHANGELOG.md with the release note from the Prepare Release workflow
           - Regenerate uv.lock
 
           After this PR is merged, run the **Release** workflow manually with version \`${VERSION}\`, or push tag \`v${VERSION}\`, to publish to PyPI and create the GitHub release.")"
