@@ -112,13 +112,22 @@ Optionally assert the expected project version:
 ./scripts/check-release.sh 0.1.0
 ```
 
-Release from `main` after the intended code changes and version bump are merged. Bump
-`pyproject.toml` with `python scripts/bump-version.py --bump patch|minor|major`, run
-`uv lock`, include both files in the normal PR, and merge it after CI passes. Then run the
-**Release** GitHub Action from `main` with confirmation value `release`, or push the
-matching `vX.Y.Z` tag. The release workflow builds artifacts, publishes them to PyPI using
-trusted publishing, attaches the artifacts to the GitHub Release, and restarts the Hugging
-Face Space when the `HF_TOKEN` secret is configured.
+Release from `main` after the intended code changes are merged. Run the **Release** GitHub
+Action from `main`, choose `patch`, `minor`, or `major` for the version bump, and enter
+confirmation value `release`. The workflow commits the `pyproject.toml` and `uv.lock`
+version bump directly to `main`, builds artifacts from that bumped commit, publishes them
+to PyPI using trusted publishing, attaches the artifacts to the GitHub Release, and
+restarts the Hugging Face Space when the `HF_TOKEN` secret is configured. Use bump value
+`none` only when retrying a failed release for the version already on `main`.
+
+For local preflight or manual version changes, use
+`python scripts/bump-version.py --bump patch|minor|major`, then `uv lock`, then
+`./scripts/check-release.sh`.
+
+PyPI trusted publishing must be configured for project `hf-agentfinder` with owner
+`huggingface`, repository `hf-agentfinder`, workflow `release.yml`, and environment `pypi`.
+The GitHub `pypi` environment does not need secrets for trusted publishing, but it must
+exist if the repository requires explicit environment configuration.
 
 ### Hugging Face Space Deployment
 
