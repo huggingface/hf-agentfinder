@@ -26,6 +26,7 @@ jobs:
   build:
     name: Build release artifacts
     runs-on: ubuntu-latest
+    environment: pypi
 
     steps:
       - name: Confirm manual release

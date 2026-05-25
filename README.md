@@ -120,6 +120,11 @@ matching `vX.Y.Z` tag. The release workflow builds artifacts, publishes them to 
 trusted publishing, attaches the artifacts to the GitHub Release, and restarts the Hugging
 Face Space when the `HF_TOKEN` secret is configured.
 
+PyPI trusted publishing must be configured for project `hf-agentfinder` with owner
+`huggingface`, repository `hf-agentfinder`, workflow `release.yml`, and environment `pypi`.
+The GitHub `pypi` environment does not need secrets for trusted publishing, but it must
+exist if the repository requires explicit environment configuration.
+
 ### Hugging Face Space Deployment
 
 The project includes a reproducible Docker Space definition in `deploy/huggingface-space/`.
