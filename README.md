@@ -5,6 +5,7 @@ A small Agent Finder registry adapter for Hugging Face Skills and Spaces.
 It exposes Hugging Face discovery as:
 
 - a CLI: `agentfinder spaces search "remove background from image"`
+- version introspection: `agentfinder --version`
 - a generic Agent Finder registry client: `agentfinder search --registry-url https://registry.example "remove background from image"`
 - a primary Agent Finder REST API for indexed Hugging Face Skills: `POST /search`
 - a nested Hugging Face Spaces registry: `POST /registries/huggingface/spaces/search`
@@ -131,6 +132,7 @@ idea and points to the artifacts that contain the operational evidence. For deta
 The examples below use the standalone `agentfinder` command form.
 
 ```bash
+> agentfinder --version
 > agentfinder spaces search "generate image" --limit 5
 > agentfinder spaces search "generate image" --kind skill --json
 > agentfinder spaces search "generate image" --kind mcp --json
@@ -147,6 +149,7 @@ For Hugging Face CLI users, the recommended install path is as an `hf` extension
 
 ```bash
 > hf extensions install huggingface/hf-agentfinder
+> hf agentfinder --version
 > hf agentfinder spaces search "generate image" --limit 5
 ```
 
@@ -163,7 +166,7 @@ available as a standalone Python console script. When installed as an extension,
 Search the nested Spaces registry:
 
 ```bash
-curl -X POST http://localhost:8080/registries/huggingface/spaces/search \
+> curl -X POST http://localhost:8080/registries/huggingface/spaces/search \
   -H 'content-type: application/json' \
   -d '{"query":{"text":"remove background from image","mediaType":"application/ai-skill"},"pageSize":5}'
 ```
@@ -171,7 +174,7 @@ curl -X POST http://localhost:8080/registries/huggingface/spaces/search \
 Search the local challenge registry:
 
 ```bash
-curl -X POST http://localhost:8090/search \
+> curl -X POST http://localhost:8090/search \
   -H 'content-type: application/json' \
   -d '{"query":{"text":"find tools and registries","federation":"referrals"},"pageSize":10}'
 ```

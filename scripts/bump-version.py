@@ -60,7 +60,6 @@ def _replace_project_version(pyproject: Path, version: str) -> str:
     pyproject.write_text(PROJECT_VERSION_RE.sub(f'version = "{version}"', text, count=1))
     return previous_version
 
-
 def main() -> None:
     args = _parse_args()
     pyproject = Path("pyproject.toml")

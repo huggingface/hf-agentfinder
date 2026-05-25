@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, version
 from typing import Annotated, Literal
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
@@ -28,6 +29,7 @@ from agentfinder.models import SearchQuery, SearchRequest, SearchResponse, Searc
 from agentfinder.server import create_app
 
 console = Console()
+PACKAGE_NAME = "hf-agentfinder"
 SPEC_HELP = """Agent Finder discovers agent capabilities through REST registries.
 
 Search sends POST /search with {"query":{"text": "...", "mediaType": optional,
@@ -50,6 +52,8 @@ app = typer.Typer(
         "Generic registry search: `agentfinder search --registry-url URL QUERY`."
     ),
     add_completion=False,
+    invoke_without_command=True,
+    no_args_is_help=True,
 )
 spaces_app = typer.Typer(
     help=f"Search and expose Hugging Face Spaces as Agent Finder results.\n\n{SPEC_HELP}",
@@ -67,6 +71,14 @@ challenge_app = typer.Typer(
 app.add_typer(spaces_app, name="spaces")
 app.add_typer(challenge_app, name="challenge")
 
+VersionOpt = Annotated[
+    bool,
+    typer.Option(
+        "--version",
+        help="Show the installed hf-agentfinder version and exit.",
+        is_eager=True,
+    ),
+]
 QueryArg = Annotated[str, typer.Argument(help="Natural-language Agent Finder search query.")]
 FederationMode = Literal["auto", "referrals", "none"]
 LimitOpt = Annotated[int, typer.Option("--limit", "-n", min=1, max=100, help="Maximum results.")]
@@ -133,6 +145,31 @@ KindOpt = Annotated[
 class RegistrySearchResult:
     response: SearchResponse
     raw_body: str
+
+
+def _project_version() -> str:
+    try:
+        return version(PACKAGE_NAME)
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def _print_version() -> None:
+    console.print(f"agentfinder {_project_version()}")
+
+
+@app.callback()
+def main(version_requested: VersionOpt = False) -> None:
+    """Agent Finder registry adapters."""
+    if version_requested:
+        _print_version()
+        raise typer.Exit
+
+
+@app.command("version")
+def version_command() -> None:
+    """Show the installed hf-agentfinder version."""
+    _print_version()
 
 
 def _registry_search_url(registry_url: str) -> str:
