@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from importlib.metadata import entry_points, version
 from inspect import signature
+from typing import Any, cast
 
 from pydantic import ValidationError
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from agentfinder import cli
@@ -41,13 +43,13 @@ def test_search_commands_default_to_hosted_registry_urls() -> None:
     assert search_parameters["local"].default is False
 
 
-def test_search_help_hides_local_base_url_escape_hatch() -> None:
-    result = CliRunner().invoke(app, ["search", "--help"])
+def test_search_command_hides_local_base_url_escape_hatch() -> None:
+    command = cast("Any", get_command(app)).commands["search"]
+    options_by_name = {parameter.name: parameter for parameter in command.params}
 
-    assert result.exit_code == 0
-    assert "--registry-url" in result.output
-    assert "--local" in result.output
-    assert "--base-url" not in result.output
+    assert options_by_name["registry_url"].hidden is False
+    assert options_by_name["local"].hidden is False
+    assert options_by_name["base_url"].hidden is True
 
 
 def test_registry_response_error_message_explains_missing_v5_type_field() -> None:
