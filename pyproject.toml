@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10.0"
 dependencies = [
     "fastapi==0.136.1",
-    "huggingface-hub==1.14.0",
+    "huggingface-hub==1.17.0",
     "pydantic==2.13.4",
     "rich==15.0.0",
     "typer==0.25.1",
@@ -20,6 +20,7 @@ hf-agentfinder = "agentfinder.cli:app"
 
 [dependency-groups]
 dev = [
+    "httpx2==2.2.0",
     "pytest==9.0.3",
     "ruff==0.15.12",
     "ty==0.0.34",
