@@ -1,21 +1,21 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Annotated, Protocol
+from typing import TYPE_CHECKING, Annotated, Any, Protocol
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
 from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.openapi.models import Example
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.concurrency import run_in_threadpool
 
 from agentfinder.hf_skills import search_hf_skills
 from agentfinder.hf_spaces import (
     AI_SKILL_MEDIA_TYPE,
     HF_SPACE_MEDIA_TYPE,
-    LEGACY_HF_SPACE_MEDIA_TYPE,
     MCP_SERVER_MEDIA_TYPE,
+    SPACES_URL_PREFIX,
     SpaceResultKind,
     build_space_skill_markdown,
     hf_space_agents_md_url,
@@ -26,8 +26,11 @@ from agentfinder.models import CatalogEntry, SearchRequest, SearchResponse, Sear
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-SPACE_MEDIA_TYPES = {HF_SPACE_MEDIA_TYPE, LEGACY_HF_SPACE_MEDIA_TYPE}
 BEARER_PREFIX = "Bearer "
+AI_CATALOG_MEDIA_TYPE = "application/ai-catalog+json"
+AI_REGISTRY_MEDIA_TYPE = "application/ai-registry+json"
+PUBLIC_BASE_URL_ENV = "AGENTFINDER_PUBLIC_BASE_URL"
+URN_AI_PUBLISHER_PARTS = 3
 SEARCH_REQUEST_EXAMPLES: dict[str, Example] = {
     "skill": Example(
         summary="Generated AI skill results",
@@ -35,7 +38,7 @@ SEARCH_REQUEST_EXAMPLES: dict[str, Example] = {
         value={
             "query": {
                 "text": "remove background from image",
-                "mediaType": "application/ai-skill",
+                "filter": {"type": ["application/ai-skill"]},
             },
             "pageSize": 5,
         },
@@ -49,7 +52,7 @@ SEARCH_REQUEST_EXAMPLES: dict[str, Example] = {
         value={
             "query": {
                 "text": "generate images with flux",
-                "mediaType": "application/vnd.huggingface.space+json",
+                "filter": {"type": ["application/vnd.huggingface.space+json"]},
             },
             "pageSize": 5,
         },
@@ -64,7 +67,7 @@ SEARCH_REQUEST_EXAMPLES: dict[str, Example] = {
         value={
             "query": {
                 "text": "image generation mcp server",
-                "mediaType": "application/mcp-server+json",
+                "filter": {"type": ["application/mcp-server+json"]},
             },
             "pageSize": 5,
         },
@@ -81,7 +84,7 @@ class SearchSpaces(Protocol):
         include_non_running: bool = False,
         token: bool | str | None = None,
         kind: SpaceResultKind = "skill",
-        base_url: str = "http://127.0.0.1:8080",
+        base_url: str = SPACES_URL_PREFIX,
     ) -> list[SearchResult]: ...
 
 
@@ -95,6 +98,11 @@ class SearchSkills(Protocol):
 
 
 def _base_url(request: Request) -> str:
+    configured = os.environ.get(PUBLIC_BASE_URL_ENV)
+    if configured is not None:
+        stripped = configured.strip().rstrip("/")
+        if stripped:
+            return stripped
     return str(request.base_url).rstrip("/")
 
 
@@ -104,9 +112,9 @@ def _spaces_registry_search_url(base_url: str) -> str:
 
 def _spaces_registry_referral(base_url: str) -> CatalogEntry:
     return CatalogEntry(
-        identifier="urn:huggingface:registry:spaces",
+        identifier="urn:ai:hf.co:registry:spaces",
         displayName="Hugging Face Spaces Registry",
-        mediaType="application/ai-registry+json",
+        type=AI_REGISTRY_MEDIA_TYPE,
         url=_spaces_registry_search_url(base_url),
         description=(
             "Search generated skills, Space descriptors, and MCP entries from running "
@@ -115,6 +123,39 @@ def _spaces_registry_referral(base_url: str) -> CatalogEntry:
         tags=["huggingface", "spaces", "registry"],
         metadata={"path": "/registries/huggingface/spaces/search"},
     )
+
+
+def _registry_catalog_entry(base_url: str) -> CatalogEntry:
+    return CatalogEntry(
+        identifier="urn:ai:hf.co:registry:agentfinder",
+        displayName="Hugging Face Agent Finder Registry",
+        type=AI_REGISTRY_MEDIA_TYPE,
+        url=f"{base_url.rstrip('/')}/search",
+        description="Search indexed Hugging Face Skills and running Hugging Face Spaces.",
+        tags=["huggingface", "registry", "search"],
+        metadata={"path": "/search"},
+    )
+
+
+def _catalog_payload(base_url: str) -> dict[str, object]:
+    return {
+        "specVersion": "1.0",
+        "host": {
+            "displayName": "Hugging Face Agent Finder",
+            "identifier": "hf.co",
+            "documentationUrl": "https://github.com/huggingface/hf-agentfinder",
+        },
+        "entries": [
+            _registry_catalog_entry(base_url).model_dump(
+                exclude_none=True,
+                exclude_defaults=True,
+            ),
+            _spaces_registry_referral(base_url).model_dump(
+                exclude_none=True,
+                exclude_defaults=True,
+            ),
+        ],
+    }
 
 
 def _skills_configured(search_skills: SearchSkills) -> bool:
@@ -144,15 +185,90 @@ def _health_payload(search_skills: SearchSkills) -> dict[str, object]:
     }
 
 
-def _result_kind(media_type: str | None) -> SpaceResultKind | None:
-    kinds: dict[str | None, SpaceResultKind] = {
-        None: "all",
+def _result_kind(artifact_type: str) -> SpaceResultKind | None:
+    kinds: dict[str, SpaceResultKind] = {
         AI_SKILL_MEDIA_TYPE: "skill",
         HF_SPACE_MEDIA_TYPE: "space",
-        LEGACY_HF_SPACE_MEDIA_TYPE: "space",
         MCP_SERVER_MEDIA_TYPE: "mcp",
     }
-    return kinds.get(media_type)
+    return kinds.get(artifact_type)
+
+
+def _filter_values(raw_filter: dict[str, Any], field: str) -> list[Any]:
+    if field not in raw_filter:
+        return []
+    value = raw_filter[field]
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _type_filters(request: SearchRequest) -> list[str]:
+    return [
+        value for value in _filter_values(request.query.filter, "type") if isinstance(value, str)
+    ]
+
+
+def _space_kinds_for_types(artifact_types: list[str]) -> list[SpaceResultKind]:
+    if not artifact_types:
+        return ["all"]
+
+    kinds: list[SpaceResultKind] = []
+    for artifact_type in artifact_types:
+        kind = _result_kind(artifact_type)
+        if kind is not None and kind not in kinds:
+            kinds.append(kind)
+    return kinds
+
+
+def _includes_skill_index(artifact_types: list[str]) -> bool:
+    return not artifact_types or AI_SKILL_MEDIA_TYPE in artifact_types
+
+
+def _publisher_from_identifier(identifier: str) -> str | None:
+    parts = identifier.split(":")
+    if len(parts) >= URN_AI_PUBLISHER_PARTS and parts[0] == "urn" and parts[1] == "ai":
+        return parts[2]
+    return None
+
+
+def _entry_values_at_path(value: Any, path: list[str]) -> list[Any]:
+    if not path:
+        return value if isinstance(value, list) else [value]
+    if isinstance(value, list):
+        return [item for child in value for item in _entry_values_at_path(child, path)]
+    if not isinstance(value, dict):
+        return []
+    current = value.get(path[0])
+    return [] if current is None else _entry_values_at_path(current, path[1:])
+
+
+def _entry_filter_values(entry: SearchResult, field: str) -> list[Any]:
+    if field == "publisher":
+        publisher = _publisher_from_identifier(entry.identifier)
+        return [] if publisher is None else [publisher]
+
+    payload = entry.model_dump(exclude_none=True)
+    return _entry_values_at_path(payload, field.split("."))
+
+
+def _matches_filter(entry: SearchResult, raw_filter: dict[str, Any]) -> bool:
+    for field, expected in raw_filter.items():
+        expected_values = expected if isinstance(expected, list) else [expected]
+        actual_values = _entry_filter_values(entry, field)
+        if not any(
+            actual == expected_value
+            for actual in actual_values
+            for expected_value in expected_values
+        ):
+            return False
+    return True
+
+
+def _apply_entry_filters(results: list[SearchResult], request: SearchRequest) -> list[SearchResult]:
+    if not request.query.filter:
+        return results
+    return [result for result in results if _matches_filter(result, request.query.filter)]
 
 
 def _bearer_token(value: str | None) -> str | None:
@@ -192,33 +308,36 @@ def effective_hf_token(
 def search_agent_finder(
     request: SearchRequest,
     *,
-    base_url: str = "http://127.0.0.1:8080",
+    base_url: str = SPACES_URL_PREFIX,
     include_non_running: bool = False,
     token: bool | str | None = None,
     search_skills: SearchSkills = search_hf_skills,
     search_spaces: SearchSpaces = search_hf_spaces,
 ) -> SearchResponse:
     results: list[SearchResult] = []
-    kind = _result_kind(request.query.mediaType)
-    if kind is None:
+    artifact_types = _type_filters(request)
+    space_kinds = _space_kinds_for_types(artifact_types)
+    if artifact_types and not space_kinds and not _includes_skill_index(artifact_types):
         return SearchResponse(results=[])
 
-    if request.query.mediaType in {None, AI_SKILL_MEDIA_TYPE}:
+    if _includes_skill_index(artifact_types):
         results.extend(search_skills(request.query.text, limit=request.pageSize))
-    results.extend(
-        search_spaces(
-            request.query.text,
-            limit=request.pageSize,
-            include_non_running=include_non_running,
-            token=token,
-            kind=kind,
-            base_url=base_url,
+    for kind in space_kinds:
+        results.extend(
+            search_spaces(
+                request.query.text,
+                limit=request.pageSize,
+                include_non_running=include_non_running,
+                token=token,
+                kind=kind,
+                base_url=base_url,
+            )
         )
-    )
+    results = _apply_entry_filters(results, request)
     results.sort(key=lambda result: result.score, reverse=True)
 
     referrals = []
-    if request.query.federation in {"auto", "referrals"}:
+    if request.federation in {"auto", "referrals"}:
         referrals.append(_spaces_registry_referral(base_url))
 
     return SearchResponse(results=results[: request.pageSize], referrals=referrals)
@@ -227,24 +346,31 @@ def search_agent_finder(
 def search_spaces_agent_finder(
     request: SearchRequest,
     *,
-    base_url: str = "http://127.0.0.1:8080",
+    base_url: str = SPACES_URL_PREFIX,
     include_non_running: bool = False,
     token: bool | str | None = None,
     search_spaces: SearchSpaces = search_hf_spaces,
 ) -> SearchResponse:
-    kind = _result_kind(request.query.mediaType)
-    if kind is None:
+    artifact_types = _type_filters(request)
+    space_kinds = _space_kinds_for_types(artifact_types)
+    if not space_kinds:
         return SearchResponse(results=[])
-    return SearchResponse(
-        results=search_spaces(
-            request.query.text,
-            limit=request.pageSize,
-            include_non_running=include_non_running,
-            token=token,
-            kind=kind,
-            base_url=base_url,
+
+    results: list[SearchResult] = []
+    for kind in space_kinds:
+        results.extend(
+            search_spaces(
+                request.query.text,
+                limit=request.pageSize,
+                include_non_running=include_non_running,
+                token=token,
+                kind=kind,
+                base_url=base_url,
+            )
         )
-    )
+    results = _apply_entry_filters(results, request)
+    results.sort(key=lambda result: result.score, reverse=True)
+    return SearchResponse(results=results[: request.pageSize])
 
 
 def fetch_agents_md(space_id: str) -> str:
@@ -321,6 +447,23 @@ def _add_spaces_search_route(
         )
 
 
+def _add_catalog_route(app: FastAPI) -> None:
+    @app.get(
+        "/.well-known/ai-catalog.json",
+        response_class=JSONResponse,
+        summary="AI Catalog discovery document",
+        description=(
+            "Return an Agent Finder v0.5-compatible AI Catalog advertising the primary "
+            "Hugging Face Agent Finder registry and nested Spaces registry."
+        ),
+    )
+    async def well_known_ai_catalog(request: Request) -> JSONResponse:
+        return JSONResponse(
+            _catalog_payload(_base_url(request)),
+            media_type=AI_CATALOG_MEDIA_TYPE,
+        )
+
+
 def create_app(
     *,
     include_non_running: bool = False,
@@ -333,6 +476,8 @@ def create_app(
     @app.get("/health")
     async def health() -> dict[str, object]:
         return _health_payload(search_skills)
+
+    _add_catalog_route(app)
 
     @app.post(
         "/search",

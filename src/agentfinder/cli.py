@@ -11,6 +11,7 @@ from urllib.request import urlopen
 
 import typer
 import uvicorn
+from pydantic import ValidationError
 from rich.console import Console
 from rich.table import Table
 
@@ -21,6 +22,7 @@ from agentfinder.hf_spaces import (
     DEFAULT_BASE_URL,
     HF_SPACE_MEDIA_TYPE,
     MCP_SERVER_MEDIA_TYPE,
+    SPACES_URL_PREFIX,
     SpaceResultKind,
     SpaceSearcher,
     search_hf_spaces,
@@ -30,7 +32,8 @@ from agentfinder.server import create_app
 
 console = Console()
 PACKAGE_NAME = "hf-agentfinder"
-DEFAULT_REGISTRY_URL = "https://evalstate-hf-agentfinder.hf.space"
+DEFAULT_REGISTRY_URL = SPACES_URL_PREFIX
+ERROR_FIELD_PREVIEW_LIMIT = 5
 SPEC_HELP = """Find agent-ready Hugging Face Skills, Spaces, Servers.
 
 Search the registry and output Agent Finder results as JSON or human readable tables.
@@ -38,10 +41,13 @@ Search the registry and output Agent Finder results as JSON or human readable ta
 Find background removal MCP Servers:
 hf-agentfinder search "remove image background" --json --kind mcp
 
-Find Skills or MCP Servers to train a vision model:
+Find AI Skills or MCP Servers to train a vision model:
 hf-agentfinder search "train a vision model" --json
 
-Use --kind skill|space|mcp to search fo a specific type.
+Use --kind skill|space|mcp to search for a specific result view:
+  skill: AI skills, including indexed Hugging Face Skills and generated Space SKILL.md wrappers
+  space: raw Hugging Face Space descriptors
+  mcp: MCP server entries for Spaces tagged mcp-server
 Use hf-agentfinder search --help for more information.
 
 """
@@ -134,16 +140,20 @@ FederationOpt = Annotated[
         "--federation",
         case_sensitive=False,
         help=(
-            "Agent Finder federation mode to send in SearchRequest.query: none, "
-            "referrals, or auto. Use referrals/auto to ask registries for registry "
-            "referrals that a client can search next."
+            "Agent Finder federation mode to send in SearchRequest: auto, referrals, or none. "
+            "Use referrals to ask registries for registry referrals that a client can search next."
         ),
     ),
 ]
 BaseUrlOpt = Annotated[
     str,
     typer.Option(
-        "--base-url", help="Local Spaces search only. Base URL used for generated skill URLs."
+        "--base-url",
+        help=(
+            "Hidden compatibility option for local in-process search. Base URL used for "
+            "generated skill URLs."
+        ),
+        hidden=True,
     ),
 ]
 KindOpt = Annotated[
@@ -152,8 +162,10 @@ KindOpt = Annotated[
         "--kind",
         case_sensitive=False,
         help=(
-            "Result artifact kind: skill, mcp, space, or all. "
-            "The 'all' kind can return both skill and MCP entries for one Space."
+            "Result view: skill (AI skills: indexed Hugging Face Skills plus generated Space "
+            "SKILL.md wrappers), space (raw Hugging Face Space descriptors), mcp (MCP server "
+            "entries for Spaces tagged mcp-server), or all. The 'all' kind can return both "
+            "skill and MCP entries for one Space."
         ),
     ),
 ]
@@ -163,6 +175,47 @@ KindOpt = Annotated[
 class RegistrySearchResult:
     response: SearchResponse
     raw_body: str
+
+
+def _missing_field_locations(exc: ValidationError) -> list[str]:
+    locations: list[str] = []
+    for error in exc.errors():
+        if error.get("type") != "missing":
+            continue
+        loc = error.get("loc")
+        if isinstance(loc, tuple):
+            locations.append(".".join(str(part) for part in loc))
+    return locations
+
+
+def _registry_response_error_message(exc: ValidationError) -> str:
+    missing_locations = _missing_field_locations(exc)
+    missing_summary = ", ".join(missing_locations[:ERROR_FIELD_PREVIEW_LIMIT])
+    if len(missing_locations) > ERROR_FIELD_PREVIEW_LIMIT:
+        missing_summary = f"{missing_summary}, ... ({len(missing_locations)} total)"
+
+    if any(
+        location.startswith("results.") and location.endswith(".type")
+        for location in missing_locations
+    ):
+        return (
+            "registry returned a response that is not an Agent Finder v0.5 SearchResponse: "
+            f"missing required catalog field(s): {missing_summary}. "
+            "Search results must be catalog entries and include `type` media types. "
+            "This usually means the registry is still serving an older pre-v0.5 schema "
+            "or the server process needs to be restarted/redeployed."
+        )
+
+    if missing_summary:
+        return (
+            "registry returned a response that is not an Agent Finder v0.5 SearchResponse: "
+            f"missing required field(s): {missing_summary}."
+        )
+
+    return (
+        "registry returned a response that is not an Agent Finder v0.5 SearchResponse: "
+        f"{exc.error_count()} validation error(s)."
+    )
 
 
 def _project_version() -> str:
@@ -197,14 +250,21 @@ def _registry_search_url(registry_url: str) -> str:
     return urljoin(f"{normalized}/", "search")
 
 
-def _media_type_for_kind(kind: SpaceResultKind) -> str | None:
-    media_types: dict[SpaceResultKind, str | None] = {
+def _artifact_type_for_kind(kind: SpaceResultKind) -> str | None:
+    artifact_types: dict[SpaceResultKind, str | None] = {
         "all": None,
         "skill": AI_SKILL_MEDIA_TYPE,
         "mcp": MCP_SERVER_MEDIA_TYPE,
         "space": HF_SPACE_MEDIA_TYPE,
     }
-    return media_types[kind]
+    return artifact_types[kind]
+
+
+def _filter_for_kind(kind: SpaceResultKind) -> dict[str, list[str]]:
+    artifact_type = _artifact_type_for_kind(kind)
+    if artifact_type is None:
+        return {}
+    return {"type": [artifact_type]}
 
 
 def _registry_search(
@@ -213,11 +273,12 @@ def _registry_search(
     *,
     limit: int,
     kind: SpaceResultKind = "all",
-    federation: FederationMode = "none",
+    federation: FederationMode = "auto",
     token: str | None = None,
 ) -> RegistrySearchResult:
     request_body = SearchRequest(
-        query=SearchQuery(text=query, mediaType=_media_type_for_kind(kind), federation=federation),
+        query=SearchQuery(text=query, filter=_filter_for_kind(kind)),
+        federation=federation,
         pageSize=limit,
     )
     headers = {
@@ -247,6 +308,11 @@ def _registry_search(
             f"registry search failed with HTTP {exc.code}: {detail}",
             param_hint="--registry-url",
         ) from exc
+    except ValidationError as exc:
+        raise typer.BadParameter(
+            _registry_response_error_message(exc),
+            param_hint="--registry-url",
+        ) from exc
     except (URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
         raise typer.BadParameter(
             f"registry search failed: {exc}",
@@ -260,7 +326,7 @@ def _registry_search_response(
     *,
     limit: int,
     kind: SpaceResultKind = "all",
-    federation: FederationMode = "none",
+    federation: FederationMode = "auto",
     token: str | None = None,
 ) -> SearchResponse:
     return _registry_search(
@@ -331,13 +397,13 @@ def _combined_search_response(
 
 
 def _result_type(result: SearchResult) -> str:
-    if result.mediaType == AI_SKILL_MEDIA_TYPE:
+    if result.type == AI_SKILL_MEDIA_TYPE:
         return "skill"
-    if result.mediaType == MCP_SERVER_MEDIA_TYPE:
+    if result.type == MCP_SERVER_MEDIA_TYPE:
         return "mcp"
-    if result.mediaType == HF_SPACE_MEDIA_TYPE:
+    if result.type == HF_SPACE_MEDIA_TYPE:
         return "space"
-    return result.mediaType
+    return result.type
 
 
 def _string_data_value(result: SearchResult, key: str) -> str:
@@ -399,9 +465,9 @@ def search_alias(  # noqa: PLR0913 - Typer command surface intentionally maps CL
     token: TokenOpt = None,
     registry_url: RegistryUrlOpt = DEFAULT_REGISTRY_URL,
     local: LocalOpt = False,
-    federation: FederationOpt = "none",
+    federation: FederationOpt = "auto",
     json_output: JsonOpt = False,
-    base_url: BaseUrlOpt = DEFAULT_BASE_URL,
+    base_url: BaseUrlOpt = DEFAULT_REGISTRY_URL,
     kind: KindOpt = "all",
 ) -> None:
     """Search a registry (default Hugging Face).
@@ -410,7 +476,7 @@ def search_alias(  # noqa: PLR0913 - Typer command surface intentionally maps CL
     Use --registry-url for any compatible registry, or --local for in-process combined
     Skills and Spaces search. With --json, the CLI prints the registry's raw SearchResponse
     bytes instead of a normalized/re-serialized model, so reading agents can inspect exact
-    result, referral, url, data, mediaType, and pageToken fields returned by the server.
+    result, referral, url, data, type, and pageToken fields returned by the server.
     """
     if local:
         _ = federation

@@ -49,11 +49,15 @@ Expected runtime variables:
   `/mnt/skills-index/latest`
 - `AGENTFINDER_MEILI_URL`, default `http://127.0.0.1:7700`
 - `AGENTFINDER_MEILI_INDEX`, default `hf_skills`
+- `AGENTFINDER_PUBLIC_BASE_URL`, optional canonical public URL used in discovery
+  documents, referrals, and generated skill URLs when the runtime reports an internal
+  base URL; leave unset/blank by default
 - `MEILI_MASTER_KEY`, configured as a Space secret
 
 Useful endpoints:
 
 - `GET /health`
+- `GET /.well-known/ai-catalog.json` for Agent Finder / AI Catalog discovery
 - `POST /search` for combined indexed Hugging Face Skills and Hugging Face Spaces
 - `POST /registries/huggingface/spaces/search` for targeted Hugging Face Spaces search
 - `GET /docs`

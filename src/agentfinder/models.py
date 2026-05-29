@@ -4,15 +4,17 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+FederationMode = Literal["auto", "referrals", "none"]
+
 
 class CatalogEntry(BaseModel):
-    """Agent Finder catalog entry using the draft's camelCase field names."""
+    """Agent Finder catalog entry using v0.5 field names."""
 
     model_config = ConfigDict(extra="allow")
 
     identifier: str
     displayName: str
-    mediaType: str
+    type: str
     url: str | None = None
     data: dict[str, Any] | None = None
     description: str | None = None
@@ -32,41 +34,34 @@ class CatalogEntry(BaseModel):
 
 
 class SearchQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     text: str = Field(
         description="Natural-language search query, for example 'remove image background'.",
         examples=["remove image background"],
     )
-    mediaType: str | None = Field(
-        default=None,
+    filter: dict[str, Any] = Field(
+        default_factory=dict,
         description=(
-            "Requested Agent Finder artifact media type. This Hugging Face adapter currently "
-            "returns generated AI skills for `application/ai-skill` or omitted mediaType, and "
-            "raw Space descriptors for `application/vnd.huggingface.space+json`. "
-            "`application/mcp-server+json` returns MCP server entries for Spaces tagged "
-            "`mcp-server`."
+            "Structured field-path constraints. Use `type` to constrain artifact media "
+            "types, for example `{'type': ['application/mcp-server+json']}`."
         ),
         examples=[
-            "application/ai-skill",
-            "application/vnd.huggingface.space+json",
-            "application/mcp-server+json",
+            {"type": ["application/ai-skill"]},
+            {"type": ["application/vnd.huggingface.space+json"]},
+            {"type": ["application/mcp-server+json"]},
         ],
-    )
-    compliance: str | None = Field(
-        default=None,
-        description="Optional compliance filter from the Agent Finder protocol.",
-    )
-    publisher: str | None = Field(
-        default=None,
-        description="Optional publisher filter from the Agent Finder protocol.",
-    )
-    federation: Literal["auto", "referrals", "none"] = Field(
-        default="none",
-        description="Federation mode requested by the client.",
     )
 
 
 class SearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     query: SearchQuery
+    federation: FederationMode = Field(
+        default="auto",
+        description="Federation mode requested by the client: auto, referrals, or none.",
+    )
     pageSize: int = Field(default=10, ge=1, le=100, description="Maximum results to return.")
     pageToken: str | None = Field(
         default=None,

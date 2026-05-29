@@ -1,6 +1,6 @@
 # AI Catalog upstream source
 
-Downloaded from `Agent-Card/ai-catalog` at ref `main`.
+Downloaded from `Agent-Card/ai-catalog` at ref `758088e84b4c84a3aa793402bcb649eb148152d7`.
 
 Source folder:
 

@@ -117,19 +117,19 @@ For example, a minimal catalog listing three AI artifacts:
     {
       "identifier": "urn:example:skill:code-review",
       "displayName": "Code Review Assistant",
-      "mediaType": "application/agentskill+zip",
+      "type": "application/ai-skills+zip",
       "url": "https://skills.example.com/code-review/skill.zip"
     },
     {
       "identifier": "urn:example:mcp:weather",
       "displayName": "Weather Service",
-      "mediaType": "application/mcp-server-card+json",
+      "type": "application/mcp-server+json",
       "url": "https://api.example.com/.well-known/mcp/server-card.json"
     },
     {
       "identifier": "urn:example:a2a:research",
       "displayName": "Research Assistant",
-      "mediaType": "application/a2a-agent-card+json",
+      "type": "application/a2a-agent-card+json",
       "url": "https://agents.example.com/researchAssistant"
     }
   ]
@@ -197,17 +197,22 @@ It MUST contain the following members:
 `displayName`
 : A string containing a human-readable name for the artifact.
 
-`mediaType`
-: A string containing the media type that identifies the type of the
-  referenced artifact. This is the mechanism by which clients
-  determine what kind of AI artifact the entry represents. Well-known
-  values include (but are not limited to):
+`type`
+: A string containing the identifier that specifies the type of the
+  referenced artifact. This field is an open text format, so any string value is accepted. However, to ensure interoperability, it is RECOMMENDED to use one of the following recognized "known types" in the ecosystem when applicable, partitioned by their respective governance boundaries:
 
+  **Core Protocol Types (Governed by the AI Catalog WG):**
   - `application/ai-catalog+json` — a nested AI Catalog
+  - `application/agent-card+json` — reserved for a generic Agent Card format
+
+  **Integrated Ecosystem & Third-Party Types (Governed externally):**
   - `application/a2a-agent-card+json` — an A2A Agent Card
-  - `application/mcp-server-card+json` — an MCP Server Card
-  - Any other media type defined by a protocol specification (e.g.,
-    `application/agentskill+zip` for skill definitions)
+  - `application/mcp-server+json` — an MCP Server Card
+  - `application/ai-skills+zip` — an AI Skill bundle (ZIP archive)
+  - `application/ai-skills+gzip` — an AI Skill bundle (gzipped tarball)
+  - `text/markdown; profile=ai-skill` — an AI Skill defined in a standard Markdown file
+
+  These values are designed to align with official IANA media type registration standards. Standard ecosystem types use registered structured syntax suffixes (`+json`, `+zip`, `+gzip`). For generic payload formats (like `text/markdown`), the standard `profile` parameter is used to specify the semantic schema (e.g., `profile=ai-skill`). For any new or custom types not listed here, it is up to the specific client implementation to handle them correctly.
 
 A Catalog Entry MUST contain exactly one of the following members to
 provide the artifact content:
@@ -215,11 +220,11 @@ provide the artifact content:
 `url`
 : A string containing a URL where the full artifact document can be
   retrieved. The document served at this URL SHOULD be served with
-  the media type declared in the `mediaType` field.
+  the media type declared in the `type` field.
 
 `data`
 : A JSON value containing the complete artifact document inline. The
-  structure of this value is determined by the `mediaType` field and
+  structure of this value is determined by the `type` field and
   is opaque to this specification.
 
 The following members are OPTIONAL:
@@ -281,7 +286,7 @@ For example, a catalog listing two versions of the same agent:
       "identifier": "urn:acme:agent:finance",
       "displayName": "Acme Finance Agent",
       "version": "2.1.0",
-      "mediaType": "application/a2a-agent-card+json",
+      "type": "application/a2a-agent-card+json",
       "url": "https://api.acme-corp.com/agents/finance/v2.1.json",
       "updatedAt": "2026-03-15T10:00:00Z"
     },
@@ -289,7 +294,7 @@ For example, a catalog listing two versions of the same agent:
       "identifier": "urn:acme:agent:finance",
       "displayName": "Acme Finance Agent",
       "version": "2.0.0",
-      "mediaType": "application/a2a-agent-card+json",
+      "type": "application/a2a-agent-card+json",
       "url": "https://api.acme-corp.com/agents/finance/v2.0.json",
       "updatedAt": "2026-01-20T08:00:00Z"
     }
@@ -649,13 +654,13 @@ For each attestation in the `attestations` array:
 # Organizing Catalogs
 
 As catalogs grow, a flat list of entries becomes unwieldy. Because any
-catalog entry can have a `mediaType` of `application/ai-catalog+json`,
+catalog entry can have a `type` of `application/ai-catalog+json`,
 catalogs are naturally composable — an entry can reference or inline
 another AI Catalog, creating a hierarchy of any depth.
 
 ## Nested Catalog Entries
 
-A catalog entry whose `mediaType` is `application/ai-catalog+json`
+A catalog entry whose `type` is `application/ai-catalog+json`
 references (via `url`) or embeds (via `data`) another AI Catalog
 document. This mechanism supports two complementary use cases:
 
@@ -675,19 +680,19 @@ its own `host` and entries:
     {
       "identifier": "urn:acme:catalog:finance",
       "displayName": "Finance Services",
-      "mediaType": "application/ai-catalog+json",
+      "type": "application/ai-catalog+json",
       "url": "https://acme.com/catalogs/finance.json"
     },
     {
       "identifier": "urn:acme:catalog:ml",
       "displayName": "ML Models",
-      "mediaType": "application/ai-catalog+json",
+      "type": "application/ai-catalog+json",
       "url": "https://acme.com/catalogs/ml.json"
     },
     {
       "identifier": "urn:acme:catalog:devops",
       "displayName": "DevOps Tools",
-      "mediaType": "application/ai-catalog+json",
+      "type": "application/ai-catalog+json",
       "url": "https://acme.com/catalogs/devops.json"
     }
   ]
@@ -703,7 +708,7 @@ agent, an MCP server, and a dataset together:
 {
   "identifier": "urn:acme:plugin:finance-suite",
   "displayName": "Finance Plugin",
-  "mediaType": "application/ai-catalog+json",
+  "type": "application/ai-catalog+json",
   "url": "https://acme.com/plugins/finance-suite.json",
   "publisher": {
     "identifier": "did:web:acme-corp.com",
@@ -895,7 +900,7 @@ A conformant Minimal Catalog is a JSON document with media type
 
 - `specVersion` — the specification version string
 - `entries` — an array of Catalog Entry objects, each containing at
-  minimum `identifier`, `displayName`, `mediaType`, and exactly one of `url` or
+  minimum `identifier`, `displayName`, `type`, and exactly one of `url` or
   `data`
 
 All other fields (`host`, `publisher`, `trustManifest`,
@@ -1041,7 +1046,7 @@ MUST treat it as untrusted input. In particular:
 - Content with HTML or script-capable media types MUST be sandboxed
   and MUST NOT be executed in the consumer's security context.
 - Consumers SHOULD validate that the `data` content is well-formed
-  JSON (or the expected format for the declared `mediaType`) before
+  JSON (or the expected format for the declared `type`) before
   processing.
 
 ## Privacy Considerations
@@ -1070,7 +1075,7 @@ classDiagram
     class CatalogEntry {
         identifier string
         displayName string
-        mediaType string
+        type string
         url | data
         version string
         publisher Publisher
@@ -1095,7 +1100,7 @@ classDiagram
     class Attestation {
         type string
         uri string
-        mediaType string
+        type string
         digest string
     }
     class ProvenanceLink {
@@ -1224,7 +1229,7 @@ HostInfo = {
 CatalogEntry = {
   identifier: text,
   displayName: text,
-  mediaType: text,
+  type: text,
   (url: text // data: any),
   ? version: text,
   ? description: text,
@@ -1267,7 +1272,7 @@ TrustSchema = {
 Attestation = {
   type: text,
   uri: text,
-  mediaType: text,
+  type: text,
   ? digest: text,
   ? size: uint,
   ? description: text
@@ -1301,7 +1306,7 @@ artifact types including a nested catalog packaging related artifacts:
       "identifier": "urn:acme:agent:finance-a2a",
       "displayName": "Acme Finance A2A Agent",
       "version": "2.1.0",
-      "mediaType": "application/a2a-agent-card+json",
+      "type": "application/a2a-agent-card+json",
       "url": "https://api.acme-corp.com/agents/finance.json",
       "description": "A2A agent for financial workflows.",
       "tags": ["finance", "a2a"],
@@ -1334,7 +1339,7 @@ artifact types including a nested catalog packaging related artifacts:
       "identifier": "urn:acme:server:finance-mcp",
       "displayName": "Acme Finance MCP Server",
       "version": "1.4.0",
-      "mediaType": "application/mcp-server-card+json",
+      "type": "application/mcp-server+json",
       "url": "https://api.acme-corp.com/.well-known/mcp/server-card.json",
       "description": "MCP server with finance tools.",
       "tags": ["finance", "mcp"],
@@ -1343,7 +1348,7 @@ artifact types including a nested catalog packaging related artifacts:
     {
       "identifier": "urn:acme:plugin:finance-suite",
       "displayName": "Acme Finance Suite",
-      "mediaType": "application/ai-catalog+json",
+      "type": "application/ai-catalog+json",
       "description": "A2A agent + MCP server + dataset for finance workflows.",
       "tags": ["finance", "suite"],
       "data": {
@@ -1352,19 +1357,19 @@ artifact types including a nested catalog packaging related artifacts:
           {
             "identifier": "urn:acme:agent:finance-a2a",
             "displayName": "Finance A2A Agent",
-            "mediaType": "application/a2a-agent-card+json",
+            "type": "application/a2a-agent-card+json",
             "url": "https://api.acme-corp.com/agents/finance.json"
           },
           {
             "identifier": "urn:acme:server:finance-mcp",
             "displayName": "Finance MCP Server",
-            "mediaType": "application/mcp-server-card+json",
+            "type": "application/mcp-server+json",
             "url": "https://api.acme-corp.com/.well-known/mcp/server-card.json"
           },
           {
             "identifier": "urn:acme:data:market-2026q1",
             "displayName": "Market Dataset Q1 2026",
-            "mediaType": "application/parquet",
+            "type": "application/parquet",
             "url": "https://data.acme-corp.com/market-2026q1.parquet",
             "trustManifest": {
               "identity": "urn:acme:data:market-2026q1",
@@ -1408,14 +1413,14 @@ document:
       "identifier": "urn:acme:agent:assistant",
       "displayName": "Acme Corporate Assistant",
       "version": "3.0.0",
-      "mediaType": "application/a2a-agent-card+json",
+      "type": "application/a2a-agent-card+json",
       "url": "https://api.acme-corp.com/agents/assistant.json",
       "description": "General-purpose corporate assistant agent."
     },
     {
       "identifier": "urn:acme:catalog:finance",
       "displayName": "Finance Services",
-      "mediaType": "application/ai-catalog+json",
+      "type": "application/ai-catalog+json",
       "url": "https://acme-corp.com/catalogs/finance.json",
       "description": "Financial agents, MCP servers, and datasets.",
       "tags": ["finance", "trading", "compliance"]
@@ -1423,7 +1428,7 @@ document:
     {
       "identifier": "urn:acme:catalog:engineering",
       "displayName": "Engineering Tools",
-      "mediaType": "application/ai-catalog+json",
+      "type": "application/ai-catalog+json",
       "url": "https://acme-corp.com/catalogs/engineering.json",
       "description": "CI/CD agents, code review tools, and DevOps servers.",
       "tags": ["engineering", "devops", "ci-cd"]
@@ -1431,7 +1436,7 @@ document:
     {
       "identifier": "urn:acme:catalog:ml-models",
       "displayName": "ML Models",
-      "mediaType": "application/ai-catalog+json",
+      "type": "application/ai-catalog+json",
       "url": "https://acme-corp.com/catalogs/ml-models.json",
       "description": "Model cards and inference endpoints.",
       "tags": ["ml", "models", "inference"]
@@ -1455,7 +1460,7 @@ containing both protocol-specific entries:
 {
   "identifier": "urn:acme:agent:finance",
   "displayName": "Acme Finance Agent",
-  "mediaType": "application/ai-catalog+json",
+  "type": "application/ai-catalog+json",
   "description": "Finance agent accessible via both MCP and A2A protocols.",
   "tags": ["finance", "dual-protocol"],
   "publisher": {
@@ -1468,13 +1473,13 @@ containing both protocol-specific entries:
       {
         "identifier": "urn:acme:agent:finance:mcp",
         "displayName": "Acme Finance MCP Server",
-        "mediaType": "application/mcp-server-card+json",
+        "type": "application/mcp-server+json",
         "url": "https://api.acme-corp.com/.well-known/mcp/server-card.json"
       },
       {
         "identifier": "urn:acme:agent:finance:a2a",
         "displayName": "Acme Finance A2A Agent",
-        "mediaType": "application/a2a-agent-card+json",
+        "type": "application/a2a-agent-card+json",
         "url": "https://api.acme-corp.com/agents/finance"
       }
     ]
@@ -1507,7 +1512,7 @@ and replication using existing container infrastructure.
 ## Logical Format vs. Physical Distribution
 
 The AI Catalog specification defines a **logical format**: a JSON
-document with `entries`, `displayName`, `mediaType`, and `trustManifest`
+document with `entries`, `displayName`, `type`, and `trustManifest`
 fields that are immediately meaningful to anyone working with AI
 artifacts. Authors write simple JSON. APIs serve simple JSON. Clients
 consume simple JSON.
@@ -1552,8 +1557,8 @@ concepts to their OCI physical equivalents:
 | AI Catalog (Logical) | OCI (Physical) |
 |:---|:---|
 | AI Catalog document | OCI Image Index with `artifactType: "application/ai-catalog+json"` |
-| Catalog Entry | OCI Image Manifest with `artifactType` set to the entry's `mediaType` |
-| Entry `mediaType` | Manifest `artifactType` field |
+| Catalog Entry | OCI Image Manifest with `artifactType` set to the entry's `type` |
+| Entry `type` | Manifest `artifactType` field |
 | Entry artifact content | Manifest `layers[0]` blob (the protocol-specific document) |
 | Entry metadata (name, tags, publisher) | Manifest `config` blob and/or `annotations` |
 | Nested Catalog Entry | Nested OCI Image Index referenced from the parent index |
@@ -1619,11 +1624,11 @@ authored by hand:
 ```json
 {
   "schemaVersion": 2,
-  "mediaType": "application/vnd.oci.image.index.v1+json",
+  "type": "application/vnd.oci.image.index.v1+json",
   "artifactType": "application/ai-catalog+json",
   "manifests": [
     {
-      "mediaType": "application/vnd.oci.image.manifest.v1+json",
+      "type": "application/vnd.oci.image.manifest.v1+json",
       "digest": "sha256:aaa111...",
       "size": 1024,
       "artifactType": "application/a2a-agent-card+json",
@@ -1633,10 +1638,10 @@ authored by hand:
       }
     },
     {
-      "mediaType": "application/vnd.oci.image.manifest.v1+json",
+      "type": "application/vnd.oci.image.manifest.v1+json",
       "digest": "sha256:bbb222...",
       "size": 512,
-      "artifactType": "application/mcp-server-card+json",
+      "artifactType": "application/mcp-server+json",
       "annotations": {
         "ai-catalog.identifier": "urn:acme:server:finance-mcp",
         "ai-catalog.displayName": "Acme Finance MCP Server"
@@ -1685,7 +1690,7 @@ tradeoffs are:
 | Concern | Logical-first (this spec) | OCI-native |
 |:---|:---|:---|
 | Authoring | Write simple JSON with domain vocabulary | Write JSON conforming to OCI Manifest schema |
-| Vocabulary | `entries`, `displayName`, `mediaType`, `trustManifest` | `manifests`, `layers`, `config`, `annotations` |
+| Vocabulary | `entries`, `displayName`, `type`, `trustManifest` | `manifests`, `layers`, `config`, `annotations` |
 | Minimum viable serving | Static JSON file at any URL (optionally well-known) | OCI registry or static OCI layout |
 | Signing | Detached JWS in logical format; Cosign/Notation in OCI | Cosign/Notation only |
 | Content integrity | Optional digests in Trust Manifest | Guaranteed by OCI content-addressing |
@@ -1765,7 +1770,7 @@ identity, trust verification, and cross-ecosystem discoverability.
 ## MCP Server as Catalog Entry
 
 An MCP server listed in the Registry maps to a Catalog Entry whose
-`url` points to the `server.json` document and whose `mediaType`
+`url` points to the `server.json` document and whose `type`
 reflects the Registry format:
 
 ```json
@@ -1773,7 +1778,7 @@ reflects the Registry format:
   "identifier": "urn:mcp:io.modelcontextprotocol.anonymous/brave-search",
   "displayName": "Brave Search",
   "version": "1.0.2",
-  "mediaType": "application/json",
+  "type": "application/mcp-server+json",
   "url": "https://registry.modelcontextprotocol.io/servers/brave-search/server.json",
   "description": "MCP server for Brave Search API integration",
   "tags": ["search", "brave", "web"],
@@ -1813,7 +1818,7 @@ catalog entry for discovery and trust evaluation, then retrieves the
 > **Note:** This example uses `application/json` because the MCP
 > Registry has not registered a dedicated media type for `server.json`.
 > When referencing an MCP Server Card (SEP-1649) instead, use
-> `application/mcp-server-card+json` — see
+> `application/mcp-server+json` — see
 > [Relationship to MCP Server Cards](#relationship-to-mcp-server-cards-sep-1649).
 
 ## MCP Registry as AI Catalog
@@ -1836,7 +1841,7 @@ agents, skills, and other artifacts:
       "identifier": "urn:mcp:io.modelcontextprotocol.anonymous/brave-search",
       "displayName": "Brave Search",
       "version": "1.0.2",
-      "mediaType": "application/json",
+      "type": "application/mcp-server+json",
       "url": "https://registry.modelcontextprotocol.io/servers/brave-search/server.json",
       "description": "MCP server for Brave Search API integration",
       "tags": ["search", "brave"]
@@ -1845,7 +1850,7 @@ agents, skills, and other artifacts:
       "identifier": "urn:mcp:io.github.modelcontextprotocol/filesystem",
       "displayName": "Filesystem",
       "version": "1.0.2",
-      "mediaType": "application/json",
+      "type": "application/mcp-server+json",
       "url": "https://registry.modelcontextprotocol.io/servers/filesystem/server.json",
       "description": "MCP server for filesystem operations",
       "tags": ["filesystem", "files"]
@@ -1854,7 +1859,7 @@ agents, skills, and other artifacts:
       "identifier": "urn:mcp:io.github.example/weather-mcp",
       "displayName": "Weather",
       "version": "0.5.0",
-      "mediaType": "application/json",
+      "type": "application/mcp-server+json",
       "url": "https://registry.modelcontextprotocol.io/servers/weather/server.json",
       "description": "Python MCP server for weather data access",
       "tags": ["weather", "python"],
@@ -1881,7 +1886,7 @@ https://api.acme-corp.com/.well-known/ai-catalog.json
 ```
 
 Clients and crawlers discover the catalog via the well-known URL,
-find entries by `mediaType`, and fetch the referenced artifacts for
+find entries by `type`, and fetch the referenced artifacts for
 operational details — whether those are MCP Server Cards, Registry
 `server.json` documents, or other AI artifact formats.
 
@@ -1939,7 +1944,7 @@ server can reference the Server Card as its artifact content:
 {
   "identifier": "urn:mcp:example.com:finance-server",
   "displayName": "Acme Finance MCP Server",
-  "mediaType": "application/mcp-server+json",
+  "type": "application/mcp-server+json",
   "url": "https://api.acme-corp.com/.well-known/mcp/server-card.json",
   "description": "MCP server for financial data and trading tools",
   "tags": ["finance", "mcp"],
@@ -1970,7 +1975,7 @@ A client discovering MCP servers follows this flow:
 
 1. Fetch `/.well-known/ai-catalog.json` to discover all artifacts on
    a domain (MCP servers, A2A agents, plugins, etc.).
-2. Filter entries by `mediaType` to find MCP servers.
+2. Filter entries by `type` to find MCP servers.
 3. Evaluate the Trust Manifest for publisher identity and attestations.
 4. Fetch the Server Card at the entry's `url` for operational details
    (transport, capabilities, tools, authentication).
@@ -2032,7 +2037,7 @@ plugins/
 | Plugin `homepage` | Entry `metadata.homepage` |
 | Plugin `.claude-plugin/plugin.json` | The artifact content (referenced via `url`) |
 | *(not in marketplace)* | Entry `trustManifest` (identity, attestations) |
-| *(not in marketplace)* | Entry `mediaType` |
+| *(not in marketplace)* | Entry `type` |
 | Centralized marketplace repo | AI Catalog (decentralized, any URL) |
 
 ## Source Types
@@ -2071,7 +2076,7 @@ maps to an AI Catalog where each plugin is an entry:
     {
       "identifier": "urn:claude-plugin:anthropic:agent-sdk-dev",
       "displayName": "agent-sdk-dev",
-      "mediaType": "application/vnd.anthropic.claude-plugin+json",
+      "type": "application/vnd.anthropic.claude-plugin+json",
       "url": "https://github.com/anthropics/claude-plugins-official/tree/main/plugins/agent-sdk-dev",
       "description": "Development kit for working with the Claude Agent SDK",
       "tags": ["development"],
@@ -2086,7 +2091,7 @@ maps to an AI Catalog where each plugin is an entry:
     {
       "identifier": "urn:claude-plugin:adspirer:ads-agent",
       "displayName": "adspirer-ads-agent",
-      "mediaType": "application/vnd.anthropic.claude-plugin+json",
+      "type": "application/vnd.anthropic.claude-plugin+json",
       "url": "https://github.com/amekala/adspirer-mcp-plugin.git",
       "description": "Cross-platform ad management for Google Ads, Meta Ads, TikTok Ads, and LinkedIn Ads.",
       "tags": ["productivity", "ads"],
@@ -2107,7 +2112,7 @@ maps to an AI Catalog where each plugin is an entry:
     {
       "identifier": "urn:claude-plugin:aikido:security",
       "displayName": "aikido",
-      "mediaType": "application/vnd.anthropic.claude-plugin+json",
+      "type": "application/vnd.anthropic.claude-plugin+json",
       "url": "https://github.com/AikidoSec/aikido-claude-plugin.git",
       "description": "Aikido Security scanning — SAST, secrets, and IaC vulnerability detection.",
       "tags": ["security"],
@@ -2141,7 +2146,7 @@ contains multiple artifact types:
 {
   "identifier": "urn:claude-plugin:anthropic:example-plugin",
   "displayName": "example-plugin",
-  "mediaType": "application/ai-catalog+json",
+  "type": "application/ai-catalog+json",
   "description": "Comprehensive plugin with commands, agents, skills, and MCP servers",
   "tags": ["development"],
   "publisher": {
@@ -2154,13 +2159,13 @@ contains multiple artifact types:
       {
         "identifier": "urn:claude-plugin:anthropic:example-plugin:mcp",
         "displayName": "Example Plugin MCP Server",
-        "mediaType": "application/mcp-server-card+json",
+        "type": "application/mcp-server+json",
         "url": "https://github.com/anthropics/claude-plugins-official/blob/main/plugins/example-plugin/server-card.json"
       },
       {
         "identifier": "urn:claude-plugin:anthropic:example-plugin:skills",
         "displayName": "Example Plugin Skills",
-        "mediaType": "application/agentskill+zip",
+        "type": "application/ai-skills+zip",
         "url": "https://github.com/anthropics/claude-plugins-official/tree/main/plugins/example-plugin/skills.zip"
       }
     ]

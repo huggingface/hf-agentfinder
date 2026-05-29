@@ -15,9 +15,9 @@ if TYPE_CHECKING:
 AI_SKILL_MEDIA_TYPE = "application/ai-skill"
 MCP_SERVER_MEDIA_TYPE = "application/mcp-server+json"
 HF_SPACE_MEDIA_TYPE = "application/vnd.huggingface.space+json"
-LEGACY_HF_SPACE_MEDIA_TYPE = "application/huggingface-space+json"
 HF_SOURCE = "https://huggingface.co"
-DEFAULT_BASE_URL = "http://127.0.0.1:8080"
+SPACES_URL_PREFIX = "https://evalstate-hf-agentfinder.hf.space"
+DEFAULT_BASE_URL = SPACES_URL_PREFIX
 MCP_SERVER_TAG = "mcp-server"
 
 SpaceResultKind = Literal["all", "skill", "space", "mcp"]
@@ -37,6 +37,12 @@ class SpaceSearchResultLike(Protocol):
 
     @property
     def title(self) -> str: ...
+
+    @property
+    def host(self) -> str | None: ...
+
+    @property
+    def subdomain(self) -> str | None: ...
 
     @property
     def emoji(self) -> str | None: ...
@@ -101,15 +107,15 @@ def hf_space_mcp_url(space_id: str, *, app_url: str | None = None) -> str:
 
 
 def hf_space_identifier(space_id: str) -> str:
-    return f"urn:huggingface:space:{space_id.replace('/', ':')}"
+    return f"urn:ai:hf.co:space:{space_id.replace('/', ':')}"
 
 
 def hf_space_skill_identifier(space_id: str) -> str:
-    return f"urn:huggingface:skill:space:{space_id.replace('/', ':')}"
+    return f"urn:ai:hf.co:skill:space:{space_id.replace('/', ':')}"
 
 
 def hf_space_mcp_identifier(space_id: str) -> str:
-    return f"urn:huggingface:mcp:space:{space_id.replace('/', ':')}"
+    return f"urn:ai:hf.co:mcp:space:{space_id.replace('/', ':')}"
 
 
 def split_space_id(space_id: str) -> tuple[str, str]:
@@ -171,10 +177,27 @@ def _runtime_domain(space: SpaceSearchResultLike) -> str | None:
     return next((value for value in domain_values if isinstance(value, str) and value), None)
 
 
+def _host_url(host: str) -> str:
+    if host.startswith(("http://", "https://")):
+        return host.rstrip("/")
+    return f"https://{host.rstrip('/')}"
+
+
+def _subdomain_url(subdomain: str) -> str:
+    host = subdomain.rstrip("/")
+    if host.endswith(".hf.space"):
+        return f"https://{host}"
+    return f"https://{host}.hf.space"
+
+
 def _space_app_url(space: SpaceSearchResultLike) -> str:
     domain = _runtime_domain(space)
     if domain is not None:
         return f"https://{domain}"
+    if space.host is not None:
+        return _host_url(space.host)
+    if space.subdomain is not None:
+        return _subdomain_url(space.subdomain)
     return hf_space_app_url(space.id)
 
 
@@ -199,7 +222,7 @@ def space_to_space_result(space: SpaceSearchResultLike) -> SearchResult:
     return SearchResult(
         identifier=hf_space_identifier(space.id),
         displayName=space.title or space.id,
-        mediaType=HF_SPACE_MEDIA_TYPE,
+        type=HF_SPACE_MEDIA_TYPE,
         data=_space_metadata(space),
         description=space.ai_short_description,
         tags=_space_tags(space),
@@ -217,7 +240,7 @@ def space_to_skill_result(
     return SearchResult(
         identifier=hf_space_skill_identifier(space.id),
         displayName=space.title or space.id,
-        mediaType=AI_SKILL_MEDIA_TYPE,
+        type=AI_SKILL_MEDIA_TYPE,
         url=skill_url_for_space(space.id, base_url=base_url),
         description=space.ai_short_description,
         tags=_space_tags(space),
@@ -234,7 +257,7 @@ def space_to_mcp_result(space: SpaceSearchResultLike) -> SearchResult:
     return SearchResult(
         identifier=hf_space_mcp_identifier(space.id),
         displayName=f"{space.title or space.id} MCP Server",
-        mediaType=MCP_SERVER_MEDIA_TYPE,
+        type=MCP_SERVER_MEDIA_TYPE,
         data={
             "name": skill_name_for_space(space.id),
             "transport": "http",

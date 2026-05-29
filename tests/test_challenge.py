@@ -17,17 +17,15 @@ def test_challenge_root_search_returns_mixed_result_types_and_referrals() -> Non
     response = client.post(
         "/search",
         json={
-            "query": {
-                "text": "find tools registries and skills",
-                "federation": "referrals",
-            },
+            "query": {"text": "find tools registries and skills"},
+            "federation": "referrals",
             "pageSize": 20,
         },
     )
 
     assert response.status_code == 200
     body = response.json()
-    media_types = {result["mediaType"] for result in body["results"]}
+    media_types = {result["type"] for result in body["results"]}
     assert {
         AI_SKILL_MEDIA_TYPE,
         MCP_SERVER_MEDIA_TYPE,
@@ -35,7 +33,7 @@ def test_challenge_root_search_returns_mixed_result_types_and_referrals() -> Non
         AI_CATALOG_MEDIA_TYPE,
         AI_REGISTRY_MEDIA_TYPE,
     } <= media_types
-    assert {referral["mediaType"] for referral in body["referrals"]} == {AI_REGISTRY_MEDIA_TYPE}
+    assert {referral["type"] for referral in body["referrals"]} == {AI_REGISTRY_MEDIA_TYPE}
 
 
 def test_challenge_search_filters_by_media_type() -> None:
@@ -44,7 +42,7 @@ def test_challenge_search_filters_by_media_type() -> None:
     response = client.post(
         "/search",
         json={
-            "query": {"text": "tool server", "mediaType": MCP_SERVER_MEDIA_TYPE},
+            "query": {"text": "tool server", "filter": {"type": [MCP_SERVER_MEDIA_TYPE]}},
             "pageSize": 10,
         },
     )
@@ -52,7 +50,7 @@ def test_challenge_search_filters_by_media_type() -> None:
     assert response.status_code == 200
     results = response.json()["results"]
     assert results
-    assert {result["mediaType"] for result in results} == {MCP_SERVER_MEDIA_TYPE}
+    assert {result["type"] for result in results} == {MCP_SERVER_MEDIA_TYPE}
 
 
 def test_challenge_nested_registry_refers_to_deep_registry() -> None:
@@ -61,7 +59,8 @@ def test_challenge_nested_registry_refers_to_deep_registry() -> None:
     response = client.post(
         "/registries/nested/search",
         json={
-            "query": {"text": "walk deeper registries", "federation": "referrals"},
+            "query": {"text": "walk deeper registries"},
+            "federation": "referrals",
             "pageSize": 5,
         },
     )
@@ -75,7 +74,7 @@ def test_challenge_nested_registry_refers_to_deep_registry() -> None:
         json={"query": {"text": "leaf artifacts"}, "pageSize": 5},
     )
     assert deep_response.status_code == 200
-    assert {result["mediaType"] for result in deep_response.json()["results"]} == {
+    assert {result["type"] for result in deep_response.json()["results"]} == {
         AI_SKILL_MEDIA_TYPE,
         MCP_SERVER_MEDIA_TYPE,
     }

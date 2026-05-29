@@ -62,10 +62,31 @@ The primary HTTP `POST /search` endpoint combines the Meilisearch-backed
 skills in one ranked response. Section-level Skills index hits are grouped into skill-level
 search results.
 
+Indexed Hugging Face Skills are directory-style skills, so their search result `url` points
+at the skill directory, not the contained `SKILL.md` file. Generated Space skills are
+single-file artifacts materialized by this adapter and continue to point at the generated
+`/skills/huggingface/{owner}/{space}/SKILL.md` URL.
+
 For `application/vnd.huggingface.space+json` and `application/mcp-server+json`, primary
 search routes directly to the Spaces backend because those media types are Space-specific.
 
-When clients request referrals with `query.federation` set to `referrals` or `auto`, the
+The registry uses the Agent Finder v0.5 search envelope: artifact type constraints are
+expressed as `query.filter.type`, response entries use the catalog `type` field, and
+Hugging Face entries use domain-anchored `urn:ai:hf.co:...` identifiers.
+
+The primary server exposes `GET /.well-known/ai-catalog.json` as an Agent Finder discovery
+document. It advertises the primary Hugging Face Agent Finder registry and the nested
+Spaces registry as `application/ai-registry+json` entries using v0.5 `type` fields and
+domain-anchored `urn:ai:hf.co:...` identifiers.
+
+By default, advertised registry and generated Space skill URLs are derived from the
+incoming request base URL, because those URLs point at materialized artifacts and search
+routes served by this adapter. Set `AGENTFINDER_PUBLIC_BASE_URL` only when a reverse proxy,
+staging deployment, or self-hosted runtime reports an internal base URL but clients need a
+different public prefix. Space-owned URLs such as `agents.md`, app URLs, and MCP endpoints
+continue to point at Hugging Face Space URLs derived from Hub/runtime metadata.
+
+When clients request referrals with top-level `federation` set to `referrals` or `auto`, the
 primary registry can still include a referral to the nested Hugging Face Spaces registry.
 Simple clients can ignore referrals and use the combined results; traversal-capable clients
 can use the referral for a follow-up Spaces-only search.
@@ -83,7 +104,7 @@ requesting referrals, making it a convenient CLI path for agents that need to pr
 Agent Finder traversal. The generic `agentfinder search` command defaults to the hosted
 deployment and also accepts `--registry-url` and `--federation none|referrals|auto`. When
 registry-backed commands are run with `--json`, the CLI prints the registry's raw
-`SearchResponse` body so clients can inspect exact `results`, `referrals`, `mediaType`,
+`SearchResponse` body so clients can inspect exact `results`, `referrals`, `type`,
 `url`, `data`, and `pageToken` fields returned by the server.
 
 ### Specification References
@@ -92,6 +113,20 @@ registry-backed commands are run with `--json`, the CLI prints the registry's ra
 reference can be refreshed from the upstream `Agent-Card/ai-catalog` repository with
 `./scripts/update-ai-catalog-spec.sh`, which copies the latest Markdown and JSON assets
 from its `specification/` folder into `spec/ai-catalog/`.
+
+The vendored `spec/ai-catalog/` snapshot currently tracks the pre-merge content from
+`Agent-Card/ai-catalog` PR #37, which updates catalog entries from `mediaType` to `type`.
+
+### Roadmap
+
+The next `hf-agentfinder` version is expected to expand Agent Finder v0.5 structured
+filter support. Today the HTTP server accepts `query.filter` and routes `type` filters,
+with additional exact-match field filters applied after retrieval; the CLI exposes only
+the common media-type path through `--kind`. Planned work includes a clearer CLI surface
+for arbitrary structured filters and improved server-side handling/pushdown for common
+fields such as tags and Space SDK.
+
+It will also use "auto" federation.
 
 ### Release Automation
 
@@ -155,6 +190,12 @@ idea and points to the artifacts that contain the operational evidence. For deta
 
 The examples below use the standalone `agentfinder` command form.
 
+`--kind skill` requests AI-skill results. In the combined registry this includes indexed,
+directory-style Hugging Face Skills from Meilisearch and generated single-file Space skill
+wrappers. `--kind space` requests raw Hugging Face Space descriptors. `--kind mcp` requests
+MCP server entries for Spaces tagged `mcp-server`. `--kind all` asks for the default mixed
+view.
+
 ```bash
 > agentfinder --version
 > agentfinder search "generate image" --limit 5
@@ -185,7 +226,7 @@ available as a standalone Python console script. When installed as an extension,
 ```bash
 > curl -X POST http://localhost:8080/search \
   -H 'content-type: application/json' \
-  -d '{"query":{"text":"upload files to a dataset repo","mediaType":"application/ai-skill"},"pageSize":5}'
+  -d '{"query":{"text":"upload files to a dataset repo","filter":{"type":["application/ai-skill"]}},"pageSize":5}'
 ```
 
 Search the targeted nested Spaces registry:
@@ -193,7 +234,7 @@ Search the targeted nested Spaces registry:
 ```bash
 > curl -X POST http://localhost:8080/registries/huggingface/spaces/search \
   -H 'content-type: application/json' \
-  -d '{"query":{"text":"remove background from image","mediaType":"application/ai-skill"},"pageSize":5}'
+  -d '{"query":{"text":"remove background from image","filter":{"type":["application/ai-skill"]}},"pageSize":5}'
 ```
 
 Search the local challenge registry:
@@ -201,7 +242,7 @@ Search the local challenge registry:
 ```bash
 > curl -X POST http://localhost:8090/search \
   -H 'content-type: application/json' \
-  -d '{"query":{"text":"find tools and registries","federation":"referrals"},"pageSize":10}'
+  -d '{"query":{"text":"find tools and registries"},"federation":"referrals","pageSize":10}'
 ```
 
 Fetch a generated skill:
@@ -213,7 +254,7 @@ Fetch a generated skill:
 To get generic Hugging Face Space descriptors instead of skill wrappers, request:
 
 ```json
-{"query":{"text":"remove background from image","mediaType":"application/vnd.huggingface.space+json"},"pageSize":5}
+{"query":{"text":"remove background from image","filter":{"type":["application/vnd.huggingface.space+json"]}},"pageSize":5}
 ```
 
 ### HF_TOKEN handling

@@ -27,6 +27,8 @@ class SpaceSearchResult:
         self.id = _string(data.get("id"))
         self.author = _string(data.get("author"))
         self.title = _string(data.get("title"))
+        self.host = _optional_string(data.get("host"))
+        self.subdomain = _optional_string(data.get("subdomain"))
         self.emoji = _optional_string(data.get("emoji"))
         self.sdk = _optional_string(data.get("sdk"))
         self.likes = _integer(data.get("likes"))

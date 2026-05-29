@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
@@ -20,6 +21,7 @@ from agentfinder.hf_spaces import (
     AI_SKILL_MEDIA_TYPE,
     HF_SPACE_MEDIA_TYPE,
     MCP_SERVER_MEDIA_TYPE,
+    SPACES_URL_PREFIX,
     SpaceResultKind,
     SpaceSearcher,
     SpaceSearchResultLike,
@@ -40,7 +42,7 @@ from agentfinder.server import (
 )
 
 SEARCH_BODY = {
-    "query": {"text": "image editing", "mediaType": "application/ai-skill"},
+    "query": {"text": "image editing", "filter": {"type": ["application/ai-skill"]}},
     "pageSize": 5,
 }
 SEARCH_RESPONSE = b"""[
@@ -102,7 +104,7 @@ class RegistrySearchHandler(BaseHTTPRequestHandler):
                 {
                     "identifier": "urn:test:skill:image",
                     "displayName": "Image Skill",
-                    "mediaType": "application/ai-skill",
+                    "type": "application/ai-skill",
                     "url": "https://example.com/SKILL.md",
                     "description": "Edit images.",
                     "score": 42.0,
@@ -171,6 +173,8 @@ class Space:
     id: str
     author: str = "alice"
     title: str = "Image Tool"
+    host: str | None = None
+    subdomain: str | None = None
     emoji: str | None = "🎨"
     sdk: str | None = "gradio"
     likes: int = 12
@@ -230,9 +234,9 @@ class RecordingSearch:
         )
         return [
             SearchResult(
-                identifier="urn:huggingface:skill:space:alice:image-tool",
+                identifier="urn:ai:hf.co:skill:space:alice:image-tool",
                 displayName="Image Tool",
-                mediaType=media_type,
+                type=media_type,
                 url=url,
                 data=data,
                 description="Edit images with a Space.",
@@ -250,9 +254,9 @@ class RecordingSkillsSearch:
         self.queries.append((query, limit))
         return [
             SearchResult(
-                identifier="urn:huggingface:skill:hf-cli",
+                identifier="urn:ai:github.com:huggingface:skills:hf-cli",
                 displayName="hf-cli",
-                mediaType=AI_SKILL_MEDIA_TYPE,
+                type=AI_SKILL_MEDIA_TYPE,
                 url="https://github.com/huggingface/skills/blob/main/skills/hf-cli/SKILL.md",
                 description="Use the Hugging Face CLI.",
                 score=98.0,
@@ -265,10 +269,10 @@ def test_space_to_search_result_defaults_to_skill_wrapper() -> None:
     space = Space(id="alice/cool.space", tags=["image-to-image"], runtime=Runtime(stage="RUNNING"))
     result = space_to_search_result(cast("SpaceSearchResultLike", space))
 
-    assert result.identifier == "urn:huggingface:skill:space:alice:cool.space"
+    assert result.identifier == "urn:ai:hf.co:skill:space:alice:cool.space"
     assert result.displayName == "Image Tool"
-    assert result.mediaType == AI_SKILL_MEDIA_TYPE
-    assert result.url == "http://127.0.0.1:8080/skills/huggingface/alice/cool.space/SKILL.md"
+    assert result.type == AI_SKILL_MEDIA_TYPE
+    assert result.url == (f"{SPACES_URL_PREFIX}/skills/huggingface/alice/cool.space/SKILL.md")
     assert result.description == "Generate and edit images."
     assert result.score == 91.0
     assert result.source == "https://huggingface.co"
@@ -284,8 +288,8 @@ def test_space_to_search_result_can_return_generic_space_descriptor() -> None:
     space = Space(id="alice/cool.space")
     result = space_to_search_result(cast("SpaceSearchResultLike", space), kind="space")
 
-    assert result.identifier == "urn:huggingface:space:alice:cool.space"
-    assert result.mediaType == HF_SPACE_MEDIA_TYPE
+    assert result.identifier == "urn:ai:hf.co:space:alice:cool.space"
+    assert result.type == HF_SPACE_MEDIA_TYPE
     assert result.url is None
     assert result.data is not None
     assert result.data["spaceId"] == "alice/cool.space"
@@ -294,6 +298,30 @@ def test_space_to_search_result_can_return_generic_space_descriptor() -> None:
 
 def test_hf_space_app_url_is_best_effort_hf_space_subdomain() -> None:
     assert hf_space_app_url("Alice/Cool.Space") == "https://alice-cool-space.hf.space"
+
+
+def test_space_results_prefer_hub_host_for_app_and_mcp_urls() -> None:
+    space = Space(id="alice/mcp", host="https://runtime-host.hf.space")
+
+    raw_result = space_to_search_result(cast("SpaceSearchResultLike", space), kind="space")
+    mcp_result = space_to_search_result(cast("SpaceSearchResultLike", space), kind="mcp")
+
+    assert raw_result.data is not None
+    assert raw_result.data["appUrl"] == "https://runtime-host.hf.space"
+    assert mcp_result.data is not None
+    assert mcp_result.data["url"] == "https://runtime-host.hf.space/gradio_api/mcp/"
+
+
+def test_space_results_use_hub_subdomain_before_best_effort_slug() -> None:
+    space = Space(id="owner/name-with-ambiguous-host", subdomain="canonical-space-subdomain")
+
+    raw_result = space_to_search_result(cast("SpaceSearchResultLike", space), kind="space")
+    mcp_result = space_to_search_result(cast("SpaceSearchResultLike", space), kind="mcp")
+
+    assert raw_result.data is not None
+    assert raw_result.data["appUrl"] == "https://canonical-space-subdomain.hf.space"
+    assert mcp_result.data is not None
+    assert mcp_result.data["url"] == "https://canonical-space-subdomain.hf.space/gradio_api/mcp/"
 
 
 def test_hf_space_mcp_url_uses_gradio_mcp_endpoint() -> None:
@@ -379,7 +407,7 @@ def test_search_hf_spaces_adds_mcp_filter_for_mcp_results() -> None:
     )
 
     assert searcher.filters == [["mcp-server"]]
-    assert [result.mediaType for result in results] == [MCP_SERVER_MEDIA_TYPE]
+    assert [result.type for result in results] == [MCP_SERVER_MEDIA_TYPE]
     assert results[0].data == {
         "name": "hf-space-alice-mcp",
         "transport": "http",
@@ -399,7 +427,7 @@ def test_search_hf_spaces_returns_skill_and_mcp_for_unfiltered_search() -> None:
         kind="all",
     )
 
-    assert [result.mediaType for result in results] == [AI_SKILL_MEDIA_TYPE, MCP_SERVER_MEDIA_TYPE]
+    assert [result.type for result in results] == [AI_SKILL_MEDIA_TYPE, MCP_SERVER_MEDIA_TYPE]
 
 
 def test_cli_search_response_forwards_kind_to_search_stub() -> None:
@@ -419,7 +447,7 @@ def test_cli_search_response_forwards_kind_to_search_stub() -> None:
         searcher=cast("SpaceSearcher", searcher),
     )
 
-    assert [result.mediaType for result in response.results] == [MCP_SERVER_MEDIA_TYPE]
+    assert [result.type for result in response.results] == [MCP_SERVER_MEDIA_TYPE]
 
 
 def test_cli_search_response_defaults_to_all_result_kinds() -> None:
@@ -438,7 +466,7 @@ def test_cli_search_response_defaults_to_all_result_kinds() -> None:
         searcher=cast("SpaceSearcher", searcher),
     )
 
-    assert [result.mediaType for result in response.results] == [
+    assert [result.type for result in response.results] == [
         AI_SKILL_MEDIA_TYPE,
         MCP_SERVER_MEDIA_TYPE,
     ]
@@ -480,7 +508,7 @@ def test_cli_registry_search_posts_agent_finder_request_to_registry_url() -> Non
     assert RegistryRequestRecorder.path == "/search"
     assert RegistryRequestRecorder.authorization == "Bearer registry-token"
     assert RegistryRequestRecorder.body == {
-        "query": {"text": "image editing", "mediaType": "application/ai-skill"},
+        "query": {"text": "image editing", "filter": {"type": ["application/ai-skill"]}},
         "pageSize": 3,
     }
     assert response.results[0].displayName == "Image Skill"
@@ -516,8 +544,10 @@ def test_hf_skills_search_queries_meili_and_groups_section_hits_by_skill() -> No
         "showRankingScoreDetails": False,
     }
     assert len(results) == 1
-    assert results[0].identifier == "urn:huggingface:skill:hf-cli"
+    assert results[0].identifier == "urn:ai:github.com:huggingface:skills:hf-cli"
+    assert results[0].url == "https://github.com/huggingface/skills/tree/main/skills/hf-cli"
     assert results[0].score == 95.0
+    assert results[0].metadata["path"] == "skills/hf-cli"
     assert results[0].metadata["title"] == "Repository uploads"
 
 
@@ -559,7 +589,10 @@ def test_hf_semantic_space_searcher_sends_agents_filter_and_token() -> None:
 def test_agent_finder_search_rejects_unsupported_media_type() -> None:
     response = search_agent_finder(
         SearchRequest(
-            query=SearchQuery(text="image editing", mediaType="application/a2a-agent-card+json"),
+            query=SearchQuery(
+                text="image editing",
+                filter={"type": ["application/a2a-agent-card+json"]},
+            ),
             pageSize=5,
         )
     )
@@ -574,7 +607,7 @@ def test_nested_spaces_registry_routes_mcp_media_type_to_mcp_results() -> None:
 
     response = search_spaces_agent_finder(
         SearchRequest(
-            query=SearchQuery(text="image editing", mediaType=MCP_SERVER_MEDIA_TYPE),
+            query=SearchQuery(text="image editing", filter={"type": [MCP_SERVER_MEDIA_TYPE]}),
             pageSize=5,
         ),
         search_spaces=lambda query, **kwargs: search_hf_spaces(
@@ -584,7 +617,7 @@ def test_nested_spaces_registry_routes_mcp_media_type_to_mcp_results() -> None:
         ),
     )
 
-    assert [result.mediaType for result in response.results] == [MCP_SERVER_MEDIA_TYPE]
+    assert [result.type for result in response.results] == [MCP_SERVER_MEDIA_TYPE]
 
 
 def test_agent_finder_search_combines_skills_and_spaces_for_skill_requests() -> None:
@@ -593,7 +626,7 @@ def test_agent_finder_search_combines_skills_and_spaces_for_skill_requests() -> 
 
     response = search_agent_finder(
         SearchRequest(
-            query=SearchQuery(text="dataset upload", mediaType=AI_SKILL_MEDIA_TYPE),
+            query=SearchQuery(text="dataset upload", filter={"type": [AI_SKILL_MEDIA_TYPE]}),
             pageSize=3,
         ),
         base_url="https://agentfinder.hf.space",
@@ -612,7 +645,7 @@ def test_agent_finder_search_routes_mcp_media_type_to_spaces_only() -> None:
 
     response = search_agent_finder(
         SearchRequest(
-            query=SearchQuery(text="tool server", mediaType=MCP_SERVER_MEDIA_TYPE),
+            query=SearchQuery(text="tool server", filter={"type": [MCP_SERVER_MEDIA_TYPE]}),
             pageSize=3,
         ),
         search_skills=search_skills,
@@ -620,9 +653,9 @@ def test_agent_finder_search_routes_mcp_media_type_to_spaces_only() -> None:
     )
 
     assert search_skills.queries == []
-    assert search_spaces.queries == [("tool server", 3, "mcp", "http://127.0.0.1:8080")]
+    assert search_spaces.queries == [("tool server", 3, "mcp", SPACES_URL_PREFIX)]
     assert [result.displayName for result in response.results] == ["Image Tool"]
-    assert [result.mediaType for result in response.results] == [MCP_SERVER_MEDIA_TYPE]
+    assert [result.type for result in response.results] == [MCP_SERVER_MEDIA_TYPE]
 
 
 def test_agent_finder_search_returns_spaces_referral_when_requested() -> None:
@@ -630,9 +663,9 @@ def test_agent_finder_search_returns_spaces_referral_when_requested() -> None:
         SearchRequest(
             query=SearchQuery(
                 text="image editing",
-                mediaType=AI_SKILL_MEDIA_TYPE,
-                federation="referrals",
+                filter={"type": [AI_SKILL_MEDIA_TYPE]},
             ),
+            federation="referrals",
             pageSize=5,
         ),
         base_url="https://agentfinder.hf.space",
@@ -642,7 +675,7 @@ def test_agent_finder_search_returns_spaces_referral_when_requested() -> None:
 
     assert response.results == []
     assert [referral.identifier for referral in response.referrals] == [
-        "urn:huggingface:registry:spaces"
+        "urn:ai:hf.co:registry:spaces"
     ]
     assert (
         response.referrals[0].url
@@ -669,13 +702,91 @@ def test_search_response_omits_null_and_default_fields() -> None:
     response = client.post(
         "/search",
         json={
-            "query": {"text": "x", "mediaType": "application/a2a-agent-card+json"},
+            "query": {"text": "x", "filter": {"type": ["application/a2a-agent-card+json"]}},
             "pageSize": 5,
         },
     )
 
     assert response.status_code == 200
     assert response.json() == {"results": []}
+
+
+def test_primary_server_exposes_v5_ai_catalog_well_known_document() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/.well-known/ai-catalog.json")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/ai-catalog+json")
+    body = response.json()
+    assert body["specVersion"] == "1.0"
+    assert body["host"]["identifier"] == "hf.co"
+
+    entries = body["entries"]
+    assert all("type" in entry for entry in entries)
+    assert all("mediaType" not in entry for entry in entries)
+    assert entries == [
+        {
+            "identifier": "urn:ai:hf.co:registry:agentfinder",
+            "displayName": "Hugging Face Agent Finder Registry",
+            "type": "application/ai-registry+json",
+            "url": "http://testserver/search",
+            "description": "Search indexed Hugging Face Skills and running Hugging Face Spaces.",
+            "tags": ["huggingface", "registry", "search"],
+            "metadata": {"path": "/search"},
+        },
+        {
+            "identifier": "urn:ai:hf.co:registry:spaces",
+            "displayName": "Hugging Face Spaces Registry",
+            "type": "application/ai-registry+json",
+            "url": "http://testserver/registries/huggingface/spaces/search",
+            "description": (
+                "Search generated skills, Space descriptors, and MCP entries from running "
+                "Hugging Face Spaces."
+            ),
+            "tags": ["huggingface", "spaces", "registry"],
+            "metadata": {"path": "/registries/huggingface/spaces/search"},
+        },
+    ]
+
+
+def test_public_base_url_config_controls_advertised_registry_urls() -> None:
+    previous = os.environ.get("AGENTFINDER_PUBLIC_BASE_URL")
+    os.environ["AGENTFINDER_PUBLIC_BASE_URL"] = " https://agentfinder.example/base/ "
+    try:
+        client = TestClient(
+            create_app(
+                search_skills=lambda query, *, limit=10: [],
+                search_spaces=lambda query, **kwargs: [],
+            )
+        )
+
+        catalog_response = client.get("/.well-known/ai-catalog.json")
+        search_response = client.post(
+            "/search",
+            json={
+                "query": {"text": "image editing"},
+                "federation": "referrals",
+                "pageSize": 1,
+            },
+        )
+    finally:
+        if previous is None:
+            os.environ.pop("AGENTFINDER_PUBLIC_BASE_URL", None)
+        else:
+            os.environ["AGENTFINDER_PUBLIC_BASE_URL"] = previous
+
+    assert catalog_response.status_code == 200
+    assert [entry["url"] for entry in catalog_response.json()["entries"]] == [
+        "https://agentfinder.example/base/search",
+        "https://agentfinder.example/base/registries/huggingface/spaces/search",
+    ]
+
+    assert search_response.status_code == 200
+    assert (
+        search_response.json()["referrals"][0]["url"]
+        == "https://agentfinder.example/base/registries/huggingface/spaces/search"
+    )
 
 
 def test_hf_token_from_headers_uses_precedence_order() -> None:
@@ -778,12 +889,11 @@ def test_openapi_search_request_examples_hint_at_media_types() -> None:
     search_operation = response.json()["paths"]["/search"]["post"]
     examples = search_operation["requestBody"]["content"]["application/json"]["examples"]
 
-    assert examples["skill"]["value"]["query"]["mediaType"] == "application/ai-skill"
-    assert (
-        examples["huggingface-space"]["value"]["query"]["mediaType"]
-        == "application/vnd.huggingface.space+json"
-    )
-    assert examples["mcp"]["value"]["query"]["mediaType"] == "application/mcp-server+json"
+    assert examples["skill"]["value"]["query"]["filter"]["type"] == ["application/ai-skill"]
+    assert examples["huggingface-space"]["value"]["query"]["filter"]["type"] == [
+        "application/vnd.huggingface.space+json"
+    ]
+    assert examples["mcp"]["value"]["query"]["filter"]["type"] == ["application/mcp-server+json"]
 
 
 def test_agents_md_route_fetches_in_threadpool(monkeypatch) -> None:

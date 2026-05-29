@@ -12,6 +12,7 @@ A2A_AGENT_MEDIA_TYPE = "application/a2a-agent-card+json"
 AI_CATALOG_MEDIA_TYPE = "application/ai-catalog+json"
 AI_REGISTRY_MEDIA_TYPE = "application/ai-registry+json"
 CHALLENGE_SOURCE = "agentfinder:challenge"
+CHALLENGE_PUBLISHER = "agentfinder.dev"
 
 
 def _base_url(request: Request) -> str:
@@ -34,9 +35,9 @@ def _score(entry: SearchResult, query: str, index: int) -> float:
 
 def _skill_result(base_url: str, name: str, description: str, score: float) -> SearchResult:
     return SearchResult(
-        identifier=f"urn:challenge:skill:{name}",
+        identifier=f"urn:ai:{CHALLENGE_PUBLISHER}:challenge:skill:{name}",
         displayName=name,
-        mediaType=AI_SKILL_MEDIA_TYPE,
+        type=AI_SKILL_MEDIA_TYPE,
         url=f"{base_url}/artifacts/skills/{name}/SKILL.md",
         description=description,
         tags=["challenge", "skill", "markdown"],
@@ -49,9 +50,9 @@ def _skill_result(base_url: str, name: str, description: str, score: float) -> S
 
 def _mcp_result(base_url: str, name: str, description: str, score: float) -> SearchResult:
     return SearchResult(
-        identifier=f"urn:challenge:mcp:{name}",
+        identifier=f"urn:ai:{CHALLENGE_PUBLISHER}:challenge:mcp:{name}",
         displayName=f"{name} MCP Server",
-        mediaType=MCP_SERVER_MEDIA_TYPE,
+        type=MCP_SERVER_MEDIA_TYPE,
         data={
             "name": name,
             "transport": "http",
@@ -75,9 +76,9 @@ def _mcp_result(base_url: str, name: str, description: str, score: float) -> Sea
 
 def _a2a_result(name: str, description: str, score: float) -> SearchResult:
     return SearchResult(
-        identifier=f"urn:challenge:a2a:{name}",
+        identifier=f"urn:ai:{CHALLENGE_PUBLISHER}:challenge:a2a:{name}",
         displayName=f"{name} A2A Agent",
-        mediaType=A2A_AGENT_MEDIA_TYPE,
+        type=A2A_AGENT_MEDIA_TYPE,
         data={
             "name": name,
             "description": description,
@@ -95,23 +96,23 @@ def _a2a_result(name: str, description: str, score: float) -> SearchResult:
 
 def _catalog_result(base_url: str, score: float) -> SearchResult:
     return SearchResult(
-        identifier="urn:challenge:catalog:bundle",
+        identifier=f"urn:ai:{CHALLENGE_PUBLISHER}:challenge:catalog:bundle",
         displayName="Challenge Bundle Catalog",
-        mediaType=AI_CATALOG_MEDIA_TYPE,
+        type=AI_CATALOG_MEDIA_TYPE,
         data={
             "specVersion": "1.0",
             "host": {"displayName": "Challenge Bundle"},
             "entries": [
                 {
-                    "identifier": "urn:challenge:bundle:skill",
+                    "identifier": f"urn:ai:{CHALLENGE_PUBLISHER}:challenge:bundle:skill",
                     "displayName": "Bundled Skill",
-                    "mediaType": AI_SKILL_MEDIA_TYPE,
+                    "type": AI_SKILL_MEDIA_TYPE,
                     "url": f"{base_url}/artifacts/skills/bundled-skill/SKILL.md",
                 },
                 {
-                    "identifier": "urn:challenge:bundle:mcp",
+                    "identifier": f"urn:ai:{CHALLENGE_PUBLISHER}:challenge:bundle:mcp",
                     "displayName": "Bundled MCP",
-                    "mediaType": MCP_SERVER_MEDIA_TYPE,
+                    "type": MCP_SERVER_MEDIA_TYPE,
                     "data": {"name": "bundled-mcp", "transport": "stdio", "command": "echo"},
                 },
             ],
@@ -133,9 +134,9 @@ def _registry_result(
     score: float,
 ) -> SearchResult:
     return SearchResult(
-        identifier=f"urn:challenge:registry:{name}",
+        identifier=f"urn:ai:{CHALLENGE_PUBLISHER}:challenge:registry:{name}",
         displayName=f"{name.title()} Challenge Registry",
-        mediaType=AI_REGISTRY_MEDIA_TYPE,
+        type=AI_REGISTRY_MEDIA_TYPE,
         url=f"{base_url}{path}",
         description=description,
         tags=["challenge", "registry", "sub-registry"],
@@ -148,9 +149,9 @@ def _registry_result(
 
 def _referral(base_url: str, name: str, path: str, description: str) -> CatalogEntry:
     return CatalogEntry(
-        identifier=f"urn:challenge:registry:{name}",
+        identifier=f"urn:ai:{CHALLENGE_PUBLISHER}:challenge:registry:{name}",
         displayName=f"{name.title()} Challenge Registry",
-        mediaType=AI_REGISTRY_MEDIA_TYPE,
+        type=AI_REGISTRY_MEDIA_TYPE,
         url=f"{base_url}{path}",
         description=description,
         tags=["challenge", "registry", "referral"],
@@ -250,9 +251,10 @@ def _filter_results(
     results: list[SearchResult],
     request: SearchRequest,
 ) -> list[SearchResult]:
-    media_type = request.query.mediaType
+    raw_type_filter = request.query.filter.get("type")
+    type_filter = raw_type_filter if isinstance(raw_type_filter, list) else [raw_type_filter]
     filtered = [
-        result for result in results if media_type is None or result.mediaType == media_type
+        result for result in results if raw_type_filter is None or result.type in type_filter
     ]
     ranked = [
         result.model_copy(update={"score": _score(result, request.query.text, index)})
@@ -270,7 +272,7 @@ def _search_response(
     referrals: list[CatalogEntry] | None = None,
 ) -> SearchResponse:
     response_referrals = referrals or []
-    if request.query.federation in {"auto", "referrals"} and not response_referrals:
+    if request.federation in {"auto", "referrals"} and not response_referrals:
         response_referrals = [
             _referral(
                 base_url,

@@ -13,6 +13,7 @@ from agentfinder.models import SearchResult
 HF_SKILLS_SOURCE = "https://github.com/huggingface/skills"
 HF_SKILLS_PUBLISHER = "huggingface/skills"
 DEFAULT_MEILI_INDEX = "hf_skills"
+SKILL_MARKDOWN_FILENAME = "SKILL.md"
 
 
 def _configured_meili_url(meili_url: str | None) -> str | None:
@@ -48,11 +49,49 @@ def _skill_key(hit: dict[str, Any]) -> str:
 
 
 def _skill_identifier(skill: str) -> str:
-    return f"urn:huggingface:skill:{skill.replace('/', ':')}"
+    return f"urn:ai:github.com:huggingface:skills:{skill.replace('/', ':')}"
+
+
+def _skill_directory_path(value: str) -> str:
+    stripped = value.strip().rstrip("/")
+    suffix = f"/{SKILL_MARKDOWN_FILENAME}"
+    if stripped.endswith(suffix):
+        return stripped[: -len(suffix)]
+    if stripped == SKILL_MARKDOWN_FILENAME:
+        return ""
+    return stripped
+
+
+def _github_tree_url_for_skill_artifact(url: str) -> str:
+    directory_url = _skill_directory_path(url)
+    return directory_url.replace("/blob/", "/tree/", 1)
 
 
 def _skill_url(hit: dict[str, Any]) -> str:
-    return _string(hit, "url") or _string(hit, "raw_url") or f"{HF_SKILLS_SOURCE}/tree/main"
+    url = _string(hit, "url")
+    if url is not None:
+        return _github_tree_url_for_skill_artifact(url)
+
+    path = _string(hit, "path")
+    if path is not None:
+        directory_path = _skill_directory_path(path)
+        if directory_path:
+            return f"{HF_SKILLS_SOURCE}/tree/main/{directory_path}"
+
+    raw_url = _string(hit, "raw_url")
+    if raw_url is not None:
+        return _github_tree_url_for_skill_artifact(raw_url)
+
+    return f"{HF_SKILLS_SOURCE}/tree/main"
+
+
+def _metadata_value(hit: dict[str, Any], key: str) -> Any:
+    value = hit[key]
+    if key == "path" and isinstance(value, str):
+        return _skill_directory_path(value)
+    if key == "url" and isinstance(value, str):
+        return _github_tree_url_for_skill_artifact(value)
+    return value
 
 
 def _search_result_from_hit(hit: dict[str, Any]) -> SearchResult:
@@ -84,12 +123,12 @@ def _search_result_from_hit(hit: dict[str, Any]) -> SearchResult:
         "part",
     ]:
         if key in hit:
-            metadata[key] = hit[key]
+            metadata[key] = _metadata_value(hit, key)
 
     return SearchResult(
         identifier=_skill_identifier(skill),
         displayName=_string(hit, "skill_name") or skill,
-        mediaType=AI_SKILL_MEDIA_TYPE,
+        type=AI_SKILL_MEDIA_TYPE,
         url=_skill_url(hit),
         description=description,
         tags=["huggingface", "skills"],
